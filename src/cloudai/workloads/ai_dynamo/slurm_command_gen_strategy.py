@@ -31,7 +31,7 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
     def _container_mounts(self, tr: TestRun) -> list[str]:
         td = cast(AIDynamoTestDefinition, tr.test.test_definition)
         mounts = [
-            f"{td.hugging_face_home_path}:{td.hugging_face_home_path}",
+            f"{td.hugging_face_home_path}:/root/.cache/huggingface",
         ]
         script_host = (tr.output_path / "run.sh").resolve()
         script_container = "/opt/run.sh"
@@ -59,6 +59,7 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
             ),
         }
 
+        base_config["Frontend"]["common-configs"] = ["model", "kv-transfer-config", "served_model_name"]
         base_config["SimpleLoadBalancer"]["common-configs"] = ["model", "kv-transfer-config", "served_model_name"]
         base_config["VllmPrefillWorker"]["common-configs"] = ["model", "kv-transfer-config", "served_model_name"]
         base_config["VllmDecodeWorker"]["common-configs"] = ["model", "kv-transfer-config", "served_model_name"]
@@ -82,12 +83,15 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
 
     def _common_header(self, hf_home: Path, port_nats: int, port_etcd: int) -> List[str]:
         return [
-            f"export HF_HOME={hf_home}",
+            f"export HF_HOME=/root/.cache/huggingface",
             "export DYNAMO_FRONTEND=$SLURM_JOB_MASTER_NODE",
+            "export VLLM_VERSION=0.9.0", # TODO: pass this as a parameter.
             f'export NATS_SERVER="nats://${{DYNAMO_FRONTEND}}:{port_nats}"',
             f'export ETCD_ENDPOINTS="http://${{DYNAMO_FRONTEND}}:{port_etcd}"',
-            "cd /workspace/examples/llm/",
+            "cd /workspace/examples/vllm_v1/",
             "CURRENT_HOST=$(hostname)",
+            "uv pip uninstall ai_dynamo_vllm || echo true",
+            "uv pip install vllm==$VLLM_VERSION || echo true",
             "export DONE_MARKER=/cloudai_run_results/frontend_done.marker",
             "",
         ]
@@ -275,7 +279,7 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
         assert isinstance(prefill_n, int), "vllm_prefill_worker.num_nodes must be an integer"
         assert isinstance(decode_n, int), "vllm_decode_worker.num_nodes must be an integer"
 
-        total_nodes = 1 + prefill_n + decode_n
+        total_nodes = prefill_n + decode_n
 
         requested_nodes, node_list = self.system.get_nodes_by_spec(tr.nnodes, tr.nodes)
         if total_nodes > requested_nodes:

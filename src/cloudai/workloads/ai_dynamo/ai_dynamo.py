@@ -29,7 +29,7 @@ class CommonConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     model: str
-    kv_transfer_config: Dict[str, str] = Field({}, alias="kv-transfer-config")
+    kv_transfer_config: str = Field('{"kv_connector":"NixlConnector","kv_role":"kv_both"}', alias="kv-transfer-config")
     served_model_name: str
 
 
@@ -38,8 +38,7 @@ class FrontendArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    served_model_name: str = "deepseek-ai/DeepSeek-R1-Distill-Llama-70B"
-    endpoint: str = "dynamo.SimpleLoadBalancer.generate_agg"
+    endpoint: str = "dynamo.SimpleLoadBalancer.generate_disagg"
     port: int = 8000
     port_etcd: int = 2379
     port_nats: int = 4222
@@ -50,7 +49,7 @@ class SimpleLoadBalancerArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    enable_disagg: bool = False
+    enable_disagg: bool = True
 
 
 class VllmWorkerBaseArgs(BaseModel):
@@ -63,6 +62,7 @@ class VllmWorkerBaseArgs(BaseModel):
     gpu_memory_utilization: float = Field(0.7, alias="gpu-memory-utilization")
     tensor_parallel_size: int = Field(8, alias="tensor-parallel-size")
     pipeline_parallel_size: int = Field(1, alias="pipeline-parallel-size")
+    enforce_eager: bool = Field(True, alias="enforce-eager")
 
 
 class VllmPrefillWorkerArgs(VllmWorkerBaseArgs):
