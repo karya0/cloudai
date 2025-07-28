@@ -55,26 +55,14 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
         
         args.extend([
             f"--huggingface-home {td.cmd_args.huggingface_home_container_path}",
-            f'--node-setup-cmd "{td.cmd_args.node_setup_cmd}"',
             "--results-dir /cloudai_run_results",
-            f"--dynamo-num-prefill-nodes {td.cmd_args.dynamo.prefill_worker.num_nodes}",
-            f"--dynamo-num-decode-nodes {td.cmd_args.dynamo.decode_worker.num_nodes}",
-            f'--dynamo-extra-args-prefill "{td.cmd_args.dynamo.prefill_worker.extra_args}"',
-            f'--dynamo-extra-args-decode "{td.cmd_args.dynamo.decode_worker.extra_args}"',
-            f'--dynamo-extra-args-genai-perf "{td.cmd_args.genai_perf.extra_args}"',
         ])
 
         args.extend(self._get_toml_args(td.cmd_args.dynamo, "--dynamo-", exclude=["prefill_worker", "decode_worker", "genai_perf"]))
-        args.extend(self._get_toml_args(td.cmd_args.dynamo.prefill_worker, "--prefill-", exclude=["num_nodes", "extra_args"]))
-        args.extend(self._get_toml_args(td.cmd_args.dynamo.decode_worker, "--decode-", exclude=["num_nodes", "extra_args"]))
-        args.extend(self._get_toml_args(td.cmd_args.genai_perf, "--genai-perf-", exclude=["extra_args"]))
+        args.extend(self._get_toml_args(td.cmd_args.dynamo.prefill_worker, "--prefill-"))
+        args.extend(self._get_toml_args(td.cmd_args.dynamo.decode_worker, "--decode-"))
+        args.extend(self._get_toml_args(td.cmd_args.genai_perf, "--genai-perf-"))
         
-        # Extra args from cmd_args
-        if td.cmd_args.extra_args:
-            # Split extra_args string and add them
-            extra_args_list = td.cmd_args.extra_args.split()
-            args.extend(extra_args_list)
-
         return args
 
     def _gen_srun_command(self) -> str:

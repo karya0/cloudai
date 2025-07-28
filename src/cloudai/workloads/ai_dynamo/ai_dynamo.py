@@ -28,8 +28,7 @@ class WorkerBaseArgs(BaseModel):
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
-    num_nodes: Union[int, list[int]]
-    extra_args: str = ""
+    num_nodes: Union[int, list[int]] = Field(alias="num-nodes")
 
 class PrefillWorkerArgs(WorkerBaseArgs):
     """Arguments for prefill worker."""
@@ -65,10 +64,7 @@ class AIDynamoCmdArgs(CmdArgs):
     huggingface_home_container_path: Path = Path("/root/.cache/huggingface")
     skip_huggingface_home_host_path_validation: bool = False
     dynamo: AIDynamoArgs
-    sleep_seconds: int = 660
     genai_perf: GenAIPerfArgs
-    node_setup_cmd: str = ""
-    extra_args: str = ""
     run_script: str = ""
 
 
