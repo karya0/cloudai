@@ -52,9 +52,6 @@ class GenAIPerfArgs(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    extra_args: str = ""
-
-
 
 class AIDynamoCmdArgs(CmdArgs):
     """Arguments for AI Dynamo."""

@@ -43,7 +43,7 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
 
     def _get_toml_args(self, base_model: BaseModel, prefix: str, exclude: List[str] = []) -> List[str]:
         args = []
-        toml_args = base_model.model_dump()
+        toml_args = base_model.model_dump(by_alias=True)
         for k, v in toml_args.items():
             if k not in exclude:
                 args.append(f'{prefix}{k} "{v}"')
