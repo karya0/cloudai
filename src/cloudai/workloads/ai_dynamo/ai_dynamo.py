@@ -28,7 +28,7 @@ class WorkerBaseArgs(BaseModel):
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
-    num-nodes: Union[int, list[int]] = Field(alias="num-nodes")
+    num_nodes: Union[int, list[int]] = Field(alias="num-nodes")
 
 class PrefillWorkerArgs(WorkerBaseArgs):
     """Arguments for prefill worker."""
