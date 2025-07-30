@@ -26,9 +26,9 @@ from cloudai.models.workload import CmdArgs, TestDefinition
 class WorkerBaseArgs(BaseModel):
     """Base arguments for VLLM workers."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
 
-    num_nodes: Union[int, list[int]] = Field(alias="num-nodes")
+    num-nodes: Union[int, list[int]] = Field(alias="num-nodes")
 
 class PrefillWorkerArgs(WorkerBaseArgs):
     """Arguments for prefill worker."""
