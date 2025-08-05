@@ -33,3 +33,37 @@ def identity_reward(observation: List[float]) -> float:
     if observation:
         return observation[0]
     return 0.0
+
+
+def custom_reward(observation: List[float]) -> float:
+    """Custom reward function for the AI Dynamo."""
+    ttft_idx = 0
+    itl_idx = 1
+    throughput_idx = 2
+
+    # Normalization
+    ttft_baseline = 0.3  # seconds
+    itl_baseline = 0.02  # seconds
+    throughput_baseline = 50.0  # tokens/s
+
+    # Weighting between metrics - equal focus on TTFT and throughput
+    ttft_weight = 0.45
+    itl_weight = 0.1
+    throughput_weight = 0.45
+
+    if len(observation) < 3:
+        return -1.0
+
+    ttft = observation[ttft_idx]
+    itl = observation[itl_idx]
+    throughput = observation[throughput_idx]
+
+    ttft_reward = ttft_baseline / ttft
+    itl_reward = itl_baseline / itl
+
+    throughput_reward = throughput / throughput_baseline
+
+    # Weighted combined reward
+    reward = ttft_weight * ttft_reward + itl_weight * itl_reward + throughput_weight * throughput_reward
+
+    return reward

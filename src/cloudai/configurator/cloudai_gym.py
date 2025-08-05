@@ -42,7 +42,7 @@ class CloudAIGymEnv(BaseGym):
             runner (Runner): The runner object to execute jobs.
         """
         self.test_run = test_run
-        self.original_test_run = copy.deepcopy(test_run) 
+        self.original_test_run = copy.deepcopy(test_run)
         self.runner = runner
         self.max_steps = test_run.test.test_definition.agent_steps
         self.reward_function = Registry().get_reward_function(test_run.test.test_definition.agent_reward_function)
