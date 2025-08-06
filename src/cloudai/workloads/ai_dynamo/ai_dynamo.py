@@ -28,8 +28,6 @@ class WorkerBaseArgs(BaseModel):
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
-    num_nodes: Union[int, list[int]] = Field(alias="num-nodes")
-
 class PrefillWorkerArgs(WorkerBaseArgs):
     """Arguments for prefill worker."""
     pass
@@ -41,10 +39,12 @@ class DecodeWorkerArgs(WorkerBaseArgs):
 class AIDynamoArgs(BaseModel):
     """Arguments for AI Dynamo setup."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     prefill_worker: PrefillWorkerArgs
     decode_worker: DecodeWorkerArgs
+    num_prefill_nodes: Union[int, list[int]] = Field(alias="num-prefill-nodes")
+    num_decode_nodes: Union[int, list[int]] = Field(alias="num-decode-nodes")
 
 
 class GenAIPerfArgs(BaseModel):

@@ -17,6 +17,7 @@
 from pathlib import Path
 from typing import List, cast
 from textwrap import indent
+import logging
 
 import yaml
 
@@ -98,13 +99,17 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
             return self._node_spec_cache[cache_key]
 
         td = cast(AIDynamoTestDefinition, self.test_run.test.test_definition)
-        prefill_n = td.cmd_args.dynamo.prefill_worker.num_nodes
-        decode_n = td.cmd_args.dynamo.decode_worker.num_nodes
+        prefill_n = td.cmd_args.dynamo.num_prefill_nodes
+        decode_n = td.cmd_args.dynamo.num_decode_nodes
 
-        assert isinstance(prefill_n, int), "prefill_worker.num_nodes must be an integer"
-        assert isinstance(decode_n, int), "decode_worker.num_nodes must be an integer"
+        assert isinstance(prefill_n, int), "dynamo.num_prefill_nodes must be an integer"
+        assert isinstance(decode_n, int), "dynamo.num_decode_nodes must be an integer"
 
         total_nodes = prefill_n + decode_n
+
+        logging.info("Setting num_nodes from %d to %d", self.test_run.num_nodes, total_nodes)
+
+        self.test_run.num_nodes = total_nodes
 
         requested_nodes, node_list = self.system.get_nodes_by_spec(self.test_run.nnodes, self.test_run.nodes)
         if total_nodes > requested_nodes:

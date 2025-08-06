@@ -31,6 +31,7 @@ class AIDynamoReportGenerationStrategy(ReportGenerationStrategy):
     metrics: ClassVar[list[str]] = [
         "default",
         "output-token-throughput",
+        "output-token-throughput-per-gpu",
         "request-throughput",
         "time-to-first-token",
         "time-to-second-token",
@@ -81,6 +82,7 @@ class AIDynamoReportGenerationStrategy(ReportGenerationStrategy):
         metric_mapping = {
             "default": "Output Token Throughput (tokens/sec)",
             "output-token-throughput": "Output Token Throughput (tokens/sec)",
+            "output-token-throughput-per-gpu": "Overall Output Tokens per Second per GPU",
             "request-throughput": "Request Throughput (per sec)",
             "time-to-first-token": "Time To First Token (ms)",
             "time-to-second-token": "Time To Second Token (ms)",
@@ -109,11 +111,10 @@ class AIDynamoReportGenerationStrategy(ReportGenerationStrategy):
             logging.warning("gpus_per_node is None, skipping Overall Output Tokens per Second per GPU calculation.")
             return
 
-        num_frontend_nodes = 1
-        num_prefill_nodes = self.test_run.test.test_definition.cmd_args.dynamo.prefill_worker.num_nodes
-        num_decode_nodes = self.test_run.test.test_definition.cmd_args.dynamo.decode_worker.num_nodes
+        num_prefill_nodes = self.test_run.test.test_definition.cmd_args.dynamo.num_prefill_nodes
+        num_decode_nodes = self.test_run.test.test_definition.cmd_args.dynamo.num_decode_nodes
 
-        total_gpus = (num_frontend_nodes + num_prefill_nodes + num_decode_nodes) * gpus_per_node
+        total_gpus = (num_prefill_nodes + num_decode_nodes) * gpus_per_node
 
         with open(source_csv, "r") as f:
             lines = f.readlines()
