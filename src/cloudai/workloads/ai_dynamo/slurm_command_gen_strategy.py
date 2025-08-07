@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
 from typing import List, cast
 from textwrap import indent
 import logging
@@ -34,7 +33,7 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
         mounts = [
             f"{td.huggingface_home_host_path}:{td.cmd_args.huggingface_home_container_path}",
         ]
-        mounts.append(f"{str(td.run_script.installed_path.absolute())}:/opt/run.sh")
+        mounts.append(f"{td.run_script.installed_path.absolute()!s}:/opt/run.sh")
 
         return mounts
 
@@ -53,17 +52,23 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
 
     def _gen_script_args(self, td: AIDynamoTestDefinition) -> List[str]:
         args = []
-        
-        args.extend([
-            f"--huggingface-home {td.cmd_args.huggingface_home_container_path}",
-            "--results-dir /cloudai_run_results",
-        ])
 
-        args.extend(self._get_toml_args(td.cmd_args.dynamo, "--dynamo-", exclude=["prefill_worker", "decode_worker", "genai_perf"]))
+        args.extend(
+            [
+                f"--huggingface-home {td.cmd_args.huggingface_home_container_path}",
+                "--results-dir /cloudai_run_results",
+            ]
+        )
+
+        args.extend(
+            self._get_toml_args(
+                td.cmd_args.dynamo, "--dynamo-", exclude=["prefill_worker", "decode_worker", "genai_perf"]
+            )
+        )
         args.extend(self._get_toml_args(td.cmd_args.dynamo.prefill_worker, "--prefill-"))
         args.extend(self._get_toml_args(td.cmd_args.dynamo.decode_worker, "--decode-"))
         args.extend(self._get_toml_args(td.cmd_args.genai_perf, "--genai-perf-"))
-        
+
         return args
 
     def _gen_srun_command(self) -> str:

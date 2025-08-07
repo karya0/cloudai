@@ -15,7 +15,7 @@
 # limitations under the License.
 
 from typing import List
-
+import math
 
 def inverse_reward(observation: List[float]) -> float:
     if observation and observation[0] != 0:
@@ -35,7 +35,7 @@ def identity_reward(observation: List[float]) -> float:
     return 0.0
 
 
-def custom_reward(observation: List[float]) -> float:
+def custom_reward_1(observation: List[float]) -> float:
     """Custom reward function for the AI Dynamo."""
     ttft_idx = 0
     itl_idx = 1
@@ -66,4 +66,61 @@ def custom_reward(observation: List[float]) -> float:
     # Weighted combined reward
     reward = ttft_weight * ttft_reward + itl_weight * itl_reward + throughput_weight * throughput_reward
 
+    return reward
+
+
+def custom_reward_2(observation: List[float]) -> float:
+    """Custom reward function: normalized throughput/(ttft * itl)."""
+    ttft_idx = 0
+    itl_idx = 1
+    throughput_idx = 2
+
+    ttft_baseline = 1.0  # seconds (1000ms)
+    itl_baseline = 0.03  # seconds (30ms)
+    throughput_baseline = 1000.0  # tokens/s
+
+    if len(observation) < 3:
+        return 0.0
+
+    ttft = observation[ttft_idx]
+    itl = observation[itl_idx]
+    throughput = observation[throughput_idx]
+
+    if ttft <= 0 or itl <= 0 or throughput <= 0:
+        return 0.0
+
+    ttft_norm = ttft / ttft_baseline
+    itl_norm = itl / itl_baseline
+    throughput_norm = throughput / throughput_baseline
+
+    reward = throughput_norm / (ttft_norm * itl_norm)
+
+    return reward
+
+
+def custom_reward_3(observation: List[float]) -> float:
+    """
+    Log-scale reward function focused on throughput and TTFT.
+    Since ITL is already optimized, we focus on the primary metrics.
+    """
+    ttft_idx = 0
+    itl_idx = 1
+    throughput_idx = 2
+
+    if len(observation) < 3:
+        return 0.0
+
+    ttft = observation[ttft_idx]
+    itl = observation[itl_idx]
+    throughput = observation[throughput_idx]
+
+    if ttft <= 0 or itl <= 0 or throughput <= 0:
+        return 0.0
+
+    throughput_reward = math.log(throughput + 1)  
+    ttft_penalty = math.log(ttft + 1)  
+    itl_penalty = math.log(itl + 1)
+    
+    reward = throughput_reward - 0.7 * ttft_penalty - 0.1 * itl_penalty
+    
     return reward

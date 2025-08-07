@@ -17,9 +17,9 @@
 from pathlib import Path
 from typing import List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, FieldValidationInfo
+from pydantic import BaseModel, ConfigDict, Field, FieldValidationInfo, field_validator
 
-from cloudai.core import DockerImage, Installable, File
+from cloudai.core import DockerImage, File, Installable
 from cloudai.models.workload import CmdArgs, TestDefinition
 
 
@@ -28,13 +28,18 @@ class WorkerBaseArgs(BaseModel):
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
+
 class PrefillWorkerArgs(WorkerBaseArgs):
     """Arguments for prefill worker."""
+
     pass
+
 
 class DecodeWorkerArgs(WorkerBaseArgs):
     """Arguments for decode worker."""
+
     pass
+
 
 class AIDynamoArgs(BaseModel):
     """Arguments for AI Dynamo setup."""
