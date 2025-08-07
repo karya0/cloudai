@@ -209,5 +209,6 @@ class CloudAIGymEnv(BaseGym):
         with open(trajectory_file_path, mode="a", newline="") as file:
             writer = csv.writer(file)
             if not file_exists:
-                writer.writerow(["step", "action", "reward", "observation"])
+                all_metrics = ", ".join(self.test_run.test.test_definition.agent_metrics)
+                writer.writerow(["step", "action", "reward", f"observation([{all_metrics}])"])
             writer.writerow([step, action, reward, observation])
