@@ -14,12 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from pathlib import Path
 from typing import List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, FieldValidationInfo, field_validator
 
-from cloudai.core import DockerImage, File, Installable
+from cloudai.core import DockerImage, File, Installable, TestRun
 from cloudai.models.workload import CmdArgs, TestDefinition
 
 
@@ -50,6 +51,7 @@ class AIDynamoArgs(BaseModel):
     decode_worker: DecodeWorkerArgs
     num_prefill_nodes: Union[int, list[int]] = Field(alias="num-prefill-nodes")
     num_decode_nodes: Union[int, list[int]] = Field(alias="num-decode-nodes")
+    constraint: str = None
 
 
 class GenAIPerfArgs(BaseModel):
@@ -104,3 +106,24 @@ class AIDynamoTestDefinition(TestDefinition):
         if not self.cmd_args.skip_huggingface_home_host_path_validation and not path.is_dir():
             raise FileNotFoundError(f"HuggingFace home path not found at {path}")
         return path
+
+
+    def constraint_check(self, tr: TestRun) -> bool:
+        if not self.cmd_args.dynamo.constraint:
+            return True
+
+        dynamo_args = tr.test.test_definition.cmd_args.dynamo.model_dump(by_alias=True)
+        prefill_args = tr.test.test_definition.cmd_args.dynamo.prefill_worker.model_dump(by_alias=True)
+        decode_args = tr.test.test_definition.cmd_args.dynamo.decode_worker.model_dump(by_alias=True)
+
+        resolved = self.cmd_args.dynamo.constraint.lower()
+        resolved = resolved.replace('%dynamo%', "dynamo_args")
+        resolved = resolved.replace('%prefill%', "prefill_args")
+        resolved = resolved.replace('%decode%', "decode_args")
+
+        if eval(resolved) == False:
+            logging.info(f"Constraint failed: {resolved}")
+            return False
+
+        logging.info(f"Constraint passed: {resolved}")
+        return True
