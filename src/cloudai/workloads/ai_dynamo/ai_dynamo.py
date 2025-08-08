@@ -51,7 +51,6 @@ class AIDynamoArgs(BaseModel):
     decode_worker: DecodeWorkerArgs
     num_prefill_nodes: Union[int, list[int]] = Field(alias="num-prefill-nodes")
     num_decode_nodes: Union[int, list[int]] = Field(alias="num-decode-nodes")
-    constraint: str = None
 
 
 class GenAIPerfArgs(BaseModel):
@@ -70,6 +69,7 @@ class AIDynamoCmdArgs(CmdArgs):
     dynamo: AIDynamoArgs
     genai_perf: GenAIPerfArgs
     run_script: str = ""
+    gpus_per_node: int
 
 
 class AIDynamoTestDefinition(TestDefinition):
@@ -78,6 +78,7 @@ class AIDynamoTestDefinition(TestDefinition):
     cmd_args: AIDynamoCmdArgs
     docker_image: Optional[DockerImage] = Field(default=None, validate_default=True)
     run_script: Optional[File] = Field(default=None, validate_default=True)
+    constraints: list[str] = []
 
     @field_validator("docker_image", mode="before")
     @classmethod
@@ -107,23 +108,36 @@ class AIDynamoTestDefinition(TestDefinition):
             raise FileNotFoundError(f"HuggingFace home path not found at {path}")
         return path
 
+    @property
+    def get_total_gpus(self) -> int:
+        gpus_per_node = self.cmd_args.gpus_per_node
+
+        if gpus_per_node is None or gpus_per_node == 0:
+            logging.warning("gpus_per_node is None or 0, skipping Overall Output Tokens per Second per GPU calculation.")
+            return 0
+
+        num_prefill_nodes = self.cmd_args.dynamo.num_prefill_nodes
+        num_decode_nodes = self.cmd_args.dynamo.num_decode_nodes
+
+        return (num_prefill_nodes + num_decode_nodes) * gpus_per_node
+
 
     def constraint_check(self, tr: TestRun) -> bool:
-        if not self.cmd_args.dynamo.constraint:
-            return True
 
         dynamo_args = tr.test.test_definition.cmd_args.dynamo.model_dump(by_alias=True)
         prefill_args = tr.test.test_definition.cmd_args.dynamo.prefill_worker.model_dump(by_alias=True)
         decode_args = tr.test.test_definition.cmd_args.dynamo.decode_worker.model_dump(by_alias=True)
 
-        resolved = self.cmd_args.dynamo.constraint.lower()
-        resolved = resolved.replace('%dynamo%', "dynamo_args")
-        resolved = resolved.replace('%prefill%', "prefill_args")
-        resolved = resolved.replace('%decode%', "decode_args")
+        for constraint in self.constraints:
+            resolved = constraint.lower()
+            resolved = resolved.replace('%dynamo%', "dynamo_args")
+            resolved = resolved.replace('%prefill%', "prefill_args")
+            resolved = resolved.replace('%decode%', "decode_args")
+            resolved = resolved.replace('%gpus_per_node%', str(self.cmd_args.gpus_per_node))
 
-        if eval(resolved) == False:
-            logging.info(f"Constraint failed: {resolved}")
-            return False
+            if eval(resolved) == False:
+                logging.info(f"constraint_check failed for: {resolved}")
+                return False
 
-        logging.info(f"Constraint passed: {resolved}")
+            logging.info(f"constraint_check passed for: {resolved}")
         return True

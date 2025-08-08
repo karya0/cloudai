@@ -104,27 +104,12 @@ class AIDynamoReportGenerationStrategy(ReportGenerationStrategy):
 
         return result
 
-    def get_total_gpus(self) -> int:
-        gpus_per_node = None
-        if isinstance(self.system, SlurmSystem):
-            gpus_per_node = self.system.gpus_per_node
-
-        if gpus_per_node is None or gpus_per_node == 0:
-            logging.warning("gpus_per_node is None or 0, skipping Overall Output Tokens per Second per GPU calculation.")
-            return 0
-
-        num_prefill_nodes = self.test_run.test.test_definition.cmd_args.dynamo.num_prefill_nodes
-        num_decode_nodes = self.test_run.test.test_definition.cmd_args.dynamo.num_decode_nodes
-
-        logging.info(f"num_prefill_nodes: {num_prefill_nodes}, num_decode_nodes: {num_decode_nodes}, gpus_per_node: {gpus_per_node}")   
-        return (num_prefill_nodes + num_decode_nodes) * gpus_per_node
-
     def get_output_token_throughput_per_gpu(self) -> float:
         output_token_throughput = self._read_metric_from_csv(self.metric_mapping["output-token-throughput"], "avg")
         if output_token_throughput == METRIC_ERROR:
             return METRIC_ERROR
 
-        total_gpus = self.get_total_gpus()
+        total_gpus = self.test_run.test.test_definition.get_total_gpus
         if total_gpus == 0:
             return METRIC_ERROR
 
