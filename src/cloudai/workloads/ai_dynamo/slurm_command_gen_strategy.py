@@ -87,7 +87,24 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
             ]
         )
         srun_cmd.extend(self._gen_script_args(td))
-        return " \\\n  ".join(srun_cmd)
+        srun_cmd = " \\\n    ".join(srun_cmd)
+
+        full_cmd = [
+            'num_retries=${DYNAMO_NUM_RETRY_ON_FAILURE:-0}',
+            'for try in $(seq 0 $num_retries); do',
+            '  echo "Try $try of $num_retries"',
+            f'  {srun_cmd}',
+            f'  if [ $try -eq $num_retries ] || [ ! -f {self.test_run.output_path.absolute()}/$DYNAMO_FATAL_ERROR_FILE ]; then',
+            '    break',
+            '  fi',
+            '  echo "Fatal error detected, copying *.log files to error.$try before retrying..."', 
+            f'  mkdir -p {self.test_run.output_path.absolute()}/error.$try',
+            f'  mv {self.test_run.output_path.absolute()}/*.log {self.test_run.output_path.absolute()}/error.$try/',
+            f'  mv {self.test_run.output_path.absolute()}/$DYNAMO_FATAL_ERROR_FILE {self.test_run.output_path.absolute()}/error.$try/',
+            "done",
+        ]
+
+        return "\n".join(full_cmd)
 
     def get_cached_nodes_spec(self) -> tuple[int, list[str]]:
         cache_key = ":".join(
