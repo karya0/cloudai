@@ -18,7 +18,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, FieldValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, FieldValidationInfo, field_serializer, field_validator
 
 from cloudai.core import DockerImage, File, Installable, TestRun
 from cloudai.models.workload import CmdArgs, TestDefinition
@@ -68,8 +68,12 @@ class AIDynamoCmdArgs(CmdArgs):
     skip_huggingface_home_host_path_validation: bool = False
     dynamo: AIDynamoArgs
     genai_perf: GenAIPerfArgs
-    run_script: str = ""
+    run_script: Path = Path("")
     gpus_per_node: int
+
+    @field_serializer("huggingface_home_host_path", "huggingface_home_container_path", "run_script")
+    def _path_serializer(self, v: Path) -> str:
+        return str(v.absolute())
 
 
 class AIDynamoTestDefinition(TestDefinition):

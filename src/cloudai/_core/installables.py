@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_serializer
 
 
 class Installable(ABC):
@@ -83,6 +83,10 @@ class DockerImage(Installable):
     def installed_path(self, value: Union[str, Path]) -> None:
         self._installed_path = value
 
+    @field_serializer("_installed_path")
+    def _path_serializer(self, v: Path) -> str:
+        return str(v)
+
 
 class GitRepo(Installable, BaseModel):
     """Git repository object."""
@@ -114,6 +118,9 @@ class GitRepo(Installable, BaseModel):
     def container_mount(self) -> str:
         return self.mount_as or f"/git/{self.repo_name}"
 
+    @field_serializer("installed_path")
+    def _path_serializer(self, v: Path) -> str:
+        return str(v)
 
 @dataclass
 class PythonExecutable(Installable):
@@ -144,6 +151,9 @@ class PythonExecutable(Installable):
     def venv_name(self) -> str:
         return f"{self.git_repo.repo_name}-venv"
 
+    @field_serializer("venv_path", "project_subpath")
+    def _path_serializer(self, v: Path) -> str:
+        return str(v)
 
 @dataclass
 class File(Installable):
@@ -165,3 +175,7 @@ class File(Installable):
 
     def __hash__(self) -> int:
         return hash(self.src)
+
+    @field_serializer("src", "_installed_path")
+    def _path_serializer(self, v: Path) -> str:
+        return str(v)
