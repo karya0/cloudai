@@ -115,8 +115,8 @@ def custom_reward_3(observation: List[float]) -> float:
     throughput = observation[throughput_idx]
 
     if ttft <= 0 or itl <= 0 or throughput <= 0:
-        return 0.0
-
+        return -1e-3
+    
     throughput_reward = math.log(throughput + 1)  
     ttft_penalty = math.log(ttft + 1)  
     itl_penalty = math.log(itl + 1)
