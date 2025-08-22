@@ -100,7 +100,9 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
             '  echo "Fatal error detected, copying *.log files to error.$try before retrying..."', 
             f'  mkdir -p {self.test_run.output_path.absolute()}/error.$try',
             f'  mv {self.test_run.output_path.absolute()}/*.log {self.test_run.output_path.absolute()}/error.$try/',
-            f'  mv {self.test_run.output_path.absolute()}/$DYNAMO_FATAL_ERROR_FILE {self.test_run.output_path.absolute()}/error.$try/',
+            f'  mv {self.test_run.output_path.absolute()}/dynamo* {self.test_run.output_path.absolute()}/error.$try/',
+            f'  echo "Updating time limit with scontrol update jobid=$SLURM_JOB_ID TimeLimit={self.test_run.time_limit}"'
+            f'  scontrol update jobid=$SLURM_JOB_ID TimeLimit={self.test_run.time_limit}',
             "done",
         ]
 
