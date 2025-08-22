@@ -90,19 +90,24 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
         srun_cmd = " \\\n    ".join(srun_cmd)
 
         full_cmd = [
+            'function log()',
+            '{',
+            '  echo "[$(date --iso-8601=ns) $(hostname)]: $@"',
+            '}',
             'num_retries=${DYNAMO_NUM_RETRY_ON_FAILURE:-0}',
             'for try in $(seq 0 $num_retries); do',
-            '  echo "Try $try of $num_retries"',
+            '  log "Try $try of $num_retries"',
             f'  {srun_cmd}',
             f'  if [ $try -eq $num_retries ] || [ ! -f {self.test_run.output_path.absolute()}/$DYNAMO_FATAL_ERROR_FILE ]; then',
             '    break',
             '  fi',
-            '  echo "Fatal error detected, copying *.log files to error.$try before retrying..."', 
-            f'  mkdir -p {self.test_run.output_path.absolute()}/error.$try',
-            f'  mv {self.test_run.output_path.absolute()}/*.log {self.test_run.output_path.absolute()}/error.$try/',
-            f'  mv {self.test_run.output_path.absolute()}/dynamo* {self.test_run.output_path.absolute()}/error.$try/',
-            f'  echo "Updating time limit with scontrol update jobid=$SLURM_JOB_ID TimeLimit={self.test_run.time_limit}"'
+            '  log "Fatal error detected, copying *.log files to error.$try before retrying..."', 
+            f'  log "Updating time limit with scontrol update jobid=$SLURM_JOB_ID TimeLimit={self.test_run.time_limit}"'
             f'  scontrol update jobid=$SLURM_JOB_ID TimeLimit={self.test_run.time_limit}',
+            f'  mkdir -p {self.test_run.output_path.absolute()}/error.$try',
+            f'  pushd {self.test_run.output_path.absolute()}',
+            f'  mv node*.txt dynamo* *.log {self.test_run.output_path.absolute()}/error.$try/',
+            f'  popd',
             "done",
         ]
 
