@@ -16,6 +16,8 @@
 
 from pathlib import Path
 from typing import List, cast
+from textwrap import indent
+import logging
 
 from cloudai.systems.slurm import SlurmCommandGenStrategy
 
@@ -199,8 +201,8 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
         prefill_nodes = td.cmd_args.dynamo.prefill_worker.nodes
         decode_nodes = td.cmd_args.dynamo.decode_worker.nodes
 
-        assert isinstance(prefill_n, int), "prefill_worker.num_nodes must be an integer"
-        assert isinstance(decode_n, int), "decode_worker.num_nodes must be an integer"
+        assert isinstance(prefill_n, int), "dynamo.num_prefill_nodes must be an integer"
+        assert isinstance(decode_n, int), "dynamo.num_decode_nodes must be an integer"
 
         if prefill_nodes and decode_nodes:
             self.test_run.nodes = prefill_nodes.split(",") + decode_nodes.split(",") + self.test_run.nodes
@@ -211,6 +213,10 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
             self.test_run.num_nodes = prefill_n + decode_n
 
         total_nodes = prefill_n + decode_n
+
+        logging.info("Setting num_nodes from %d to %d", self.test_run.num_nodes, total_nodes)
+
+        self.test_run.num_nodes = total_nodes
 
         requested_nodes, node_list = self.system.get_nodes_by_spec(self.test_run.nnodes, self.test_run.nodes)
 

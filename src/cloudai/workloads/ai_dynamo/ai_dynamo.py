@@ -14,12 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from pathlib import Path
 from typing import Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, FieldValidationInfo, field_serializer, field_validator
 
-from cloudai.core import DockerImage, File, GitRepo, Installable
+from cloudai.core import DockerImage, File, GitRepo, Installable, TestRun
 from cloudai.models.workload import CmdArgs, TestDefinition
 
 
@@ -47,11 +48,13 @@ class DecodeWorkerArgs(WorkerBaseArgs):
 class AIDynamoArgs(BaseModel):
     """Arguments for AI Dynamo setup."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     backend: str = "vllm"
     prefill_worker: PrefillWorkerArgs
     decode_worker: DecodeWorkerArgs
+    #num_prefill_nodes: Union[int, list[int]] = Field(alias="num-prefill-nodes")
+    #num_decode_nodes: Union[int, list[int]] = Field(alias="num-decode-nodes")
 
 
 class GenAIPerfArgs(BaseModel):
@@ -66,9 +69,14 @@ class AIDynamoCmdArgs(CmdArgs):
     docker_image_url: str
     huggingface_home_host_path: Path = Path.home() / ".cache/huggingface"
     huggingface_home_container_path: Path = Path("/root/.cache/huggingface")
+    skip_huggingface_home_host_path_validation: bool = False
     dynamo: AIDynamoArgs
     genai_perf: GenAIPerfArgs
-    run_script: str = ""
+    gpus_per_node: int
+
+    @field_serializer("huggingface_home_host_path", "huggingface_home_container_path")
+    def _path_serializer(self, v: Path) -> str:
+        return str(v.absolute())
 
 
 class AIDynamoTestDefinition(TestDefinition):
@@ -80,6 +88,7 @@ class AIDynamoTestDefinition(TestDefinition):
     dynamo_repo: GitRepo = GitRepo(
         url="https://github.com/ai-dynamo/dynamo.git", commit="f7e468c7e8ff0d1426db987564e60572167e8464"
     )
+    constraints: list[str] = []
 
     @property
     def docker_image(self) -> DockerImage:
@@ -94,6 +103,40 @@ class AIDynamoTestDefinition(TestDefinition):
     @property
     def huggingface_home_host_path(self) -> Path:
         path = Path(self.cmd_args.huggingface_home_host_path)
-        if not path.is_dir():
+        if not self.cmd_args.skip_huggingface_home_host_path_validation and not path.is_dir():
             raise FileNotFoundError(f"HuggingFace home path not found at {path}")
         return path
+
+    @property
+    def get_total_gpus(self) -> int:
+        gpus_per_node = self.cmd_args.gpus_per_node
+
+        if gpus_per_node is None or gpus_per_node == 0:
+            logging.warning("gpus_per_node is None or 0, skipping Overall Output Tokens per Second per GPU calculation.")
+            return 0
+
+        num_prefill_nodes = self.cmd_args.dynamo.num_prefill_nodes
+        num_decode_nodes = self.cmd_args.dynamo.num_decode_nodes
+
+        return (num_prefill_nodes + num_decode_nodes) * gpus_per_node
+
+
+    def constraint_check(self, tr: TestRun) -> bool:
+
+        dynamo_args = tr.test.test_definition.cmd_args.dynamo.model_dump(by_alias=True)
+        prefill_args = tr.test.test_definition.cmd_args.dynamo.prefill_worker.model_dump(by_alias=True)
+        decode_args = tr.test.test_definition.cmd_args.dynamo.decode_worker.model_dump(by_alias=True)
+
+        for constraint in self.constraints:
+            resolved = constraint.lower()
+            resolved = resolved.replace('%dynamo%', "dynamo_args")
+            resolved = resolved.replace('%prefill%', "prefill_args")
+            resolved = resolved.replace('%decode%', "decode_args")
+            resolved = resolved.replace('%gpus_per_node%', str(self.cmd_args.gpus_per_node))
+
+            if eval(resolved) == False:
+                logging.info(f"constraint_check failed for: {resolved}")
+                return False
+
+            logging.info(f"constraint_check passed for: {resolved}")
+        return True

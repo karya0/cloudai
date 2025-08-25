@@ -31,13 +31,32 @@ class AIDynamoReportGenerationStrategy(ReportGenerationStrategy):
 
     metrics: ClassVar[list[str]] = [
         "default",
-        "output-token-throughput",
-        "request-throughput",
-        "time-to-first-token",
-        "time-to-second-token",
-        "request-latency",
-        "inter-token-latency",
+        "output-token-throughput-per-gpu",
+        *[
+            f"{base}:{suffix}"
+            for base in [
+                "output-token-throughput",
+                "request-throughput",
+                "time-to-first-token",
+                "time-to-second-token",
+                "request-latency",
+                "inter-token-latency",
+            ]
+            for suffix in [
+                "avg", "min", "max", "p99", "p95", "p90", "p75", "p50", "p25", "p10", "p5", "p1"
+            ]
+        ],
     ]
+
+    metric_mapping = {
+        "default": "Output Token Throughput (tokens/sec)",
+        "output-token-throughput": "Output Token Throughput (tokens/sec)",
+        "request-throughput": "Request Throughput (per sec)",
+        "time-to-first-token": "Time To First Token (ms)",
+        "time-to-second-token": "Time To Second Token (ms)",
+        "request-latency": "Request Latency (ms)",
+        "inter-token-latency": "Inter Token Latency (ms)",
+    }
 
     def can_handle_directory(self) -> bool:
         output_path = self.test_run.output_path
@@ -89,28 +108,37 @@ class AIDynamoReportGenerationStrategy(ReportGenerationStrategy):
             value = self._find_metric_in_section(section, metric_name)
             if value is not None:
                 return value
-
         return METRIC_ERROR
+
+    def get_output_token_throughput_per_gpu(self) -> float:
+        output_token_throughput = self._read_metric_from_csv(self.metric_mapping["output-token-throughput"], "avg")
+        if output_token_throughput == METRIC_ERROR:
+            return METRIC_ERROR
+
+        total_gpus = self.test_run.test.test_definition.get_total_gpus
+        if total_gpus == 0:
+            return METRIC_ERROR
+
+        return output_token_throughput / total_gpus
 
     def get_metric(self, metric: str) -> float:
         if metric not in self.metrics:
             return METRIC_ERROR
 
-        metric_mapping = {
-            "default": "Output Token Throughput (tokens/sec)",
-            "output-token-throughput": "Output Token Throughput (tokens/sec)",
-            "request-throughput": "Request Throughput (per sec)",
-            "time-to-first-token": "Time To First Token (ms)",
-            "time-to-second-token": "Time To Second Token (ms)",
-            "request-latency": "Request Latency (ms)",
-            "inter-token-latency": "Inter Token Latency (ms)",
-        }
+        if metric == "output-token-throughput-per-gpu":
+            return self.get_output_token_throughput_per_gpu();
 
-        mapped_metric = metric_mapping.get(metric)
+        metric_name = metric
+        metric_type = 'avg'
+
+        if ":" in metric:
+            metric_name, metric_type = metric.split(":")
+
+        mapped_metric = self.metric_mapping.get(metric_name)
         if not mapped_metric:
             return METRIC_ERROR
 
-        return self._read_metric_from_csv(mapped_metric)
+        return self._read_metric_from_csv(mapped_metric, metric_type)
 
     def _calculate_total_gpus(self) -> int | None:
         gpus_per_node = None
