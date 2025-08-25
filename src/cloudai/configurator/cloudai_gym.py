@@ -102,7 +102,7 @@ class CloudAIGymEnv(BaseGym):
 
         if not self.test_run.test.test_definition.constraint_check(self.test_run):
             logging.info("Constraint check failed. Skipping step.")
-            return [-1.0], -1.0, True, {}
+            return [-1.0], -1e-6, True, {"constraint_failed": True}
 
         logging.info(f"Running step {self.test_run.step} with action {action}")
         new_tr = copy.deepcopy(self.test_run)
@@ -130,7 +130,7 @@ class CloudAIGymEnv(BaseGym):
 
         self.write_trajectory(self.test_run.step, action, reward, observation)
 
-        return observation, reward, False, {}
+        return observation, reward, False, {"constraint_failed": False}
 
     def render(self, mode: str = "human"):
         """
@@ -205,5 +205,6 @@ class CloudAIGymEnv(BaseGym):
         with open(trajectory_file_path, mode="a", newline="") as file:
             writer = csv.writer(file)
             if not file_exists:
-                writer.writerow(["step", "action", "reward", "observation"])
+                all_metrics = ", ".join(self.test_run.test.test_definition.agent_metrics)
+                writer.writerow(["step", "action", "reward", f"observation([{all_metrics}])"])
             writer.writerow([step, action, reward, observation])

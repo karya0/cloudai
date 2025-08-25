@@ -133,16 +133,22 @@ def handle_dse_job(runner: Runner, args: argparse.Namespace):
             continue
 
         agent = agent_class(env)
-        for step in range(agent.max_steps):
+        success_count = 0
+        while success_count < agent.max_steps:
             result = agent.select_action()
             if result is None:
                 break
-            step, action = result
-            env.test_run.step = step
+            display_step, action = result
+            env.test_run.step = display_step
             observation, reward, done, info = env.step(action)
-            feedback = {"trial_index": step, "value": reward}
+            if info.get("constraint_failed"):
+                agent.update_policy({"trial_index": display_step, "value": None})
+                logging.info(f"Step {display_step}: Constraint failed. Skipping without increment.")
+                continue
+            feedback = {"trial_index": display_step, "value": reward}
             agent.update_policy(feedback)
-            logging.info(f"Step {step}: Observation: {observation}, Reward: {reward}")
+            logging.info(f"Step {display_step}: Observation: {observation}, Reward: {reward}")
+            success_count += 1
 
     if args.mode == "run":
         runner.runner.test_scenario.test_runs = original_test_runs
