@@ -118,9 +118,7 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
         td = cast(AIDynamoTestDefinition, self.test_run.test.test_definition)
         num_nodes, node_list = self.get_cached_nodes_spec()
 
-        fatal_file_name = "fatal_error.marker"
         out_dir = self.test_run.output_path.absolute()
-        fatal_path = f"{out_dir}/{fatal_file_name}"
 
         srun_cmd = self.gen_srun_prefix()
         srun_cmd.extend(
@@ -129,7 +127,7 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
                 *([] if not node_list else [f"--nodelist={','.join(node_list)}"]),
                 f"--ntasks={num_nodes}",
                 "--ntasks-per-node=1",
-                f"--export=ALL,DYNAMO_FATAL_ERROR_FILE={fatal_file_name}",
+                f"--export=ALL",
                 f"--output={out_dir / 'node-%n-stdout.txt'}",
                 f"--error={out_dir / 'node-%n-stderr.txt'}",
                 "bash",
@@ -141,19 +139,20 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
 
         wrapper = [
             "num_retries=${DYNAMO_NUM_RETRY_ON_FAILURE:-0}",
+            "fatal_file_name=$out_dir/${DYNAMO_FATAL_ERROR_FILE:-dynamo_fatal_error.marker}",
             "for try in $(seq 0 $num_retries); do",
             '  echo "Try $try of $num_retries"',
-            f"  rm -f {fatal_path} 2>/dev/null || true",
+            f"  rm -f $fatal_file_name 2>/dev/null || true",
             f"  {srun_line}",
-            f"  if [ $try -eq $num_retries ] || [ ! -f {fatal_path} ]; then",
+            f"  if [ $try -eq $num_retries ] || [ ! -f $fatal_file_name ]; then",
             "    break",
             "  fi",
             '  echo "Fatal error detected. Archiving logs then retrying..."',
             f"  mkdir -p {out_dir}/error.$try",
             f"  mv {out_dir}/*.log {out_dir}/error.$try/ 2>/dev/null || true",
-            f"  mv {out_dir}/node-*-stdout.txt {out_dir}/error.$try/ 2>/dev/null || true",
-            f"  mv {out_dir}/node-*-stderr.txt {out_dir}/error.$try/ 2>/dev/null || true",
-            f"  mv {fatal_path} {out_dir}/error.$try/ 2>/dev/null || true",
+            f"  mv {out_dir}/dynamo_* {out_dir}/error.$try/ 2>/dev/null || true",
+            f"  mv {out_dir}/node* {out_dir}/error.$try/ 2>/dev/null || true",
+            f"  mv $fatal_file_name {out_dir}/error.$try/ 2>/dev/null || true",
             "  sleep ${DYNAMO_RETRY_BACKOFF_SEC:-10}",
             "done",
         ]

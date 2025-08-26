@@ -41,6 +41,7 @@ class AIDynamoReportGenerationStrategy(ReportGenerationStrategy):
                 "time-to-second-token",
                 "request-latency",
                 "inter-token-latency",
+                "output-token-throughput-per-user",
             ]
             for suffix in [
                 "avg", "min", "max", "p99", "p95", "p90", "p75", "p50", "p25", "p10", "p5", "p1"
@@ -56,6 +57,7 @@ class AIDynamoReportGenerationStrategy(ReportGenerationStrategy):
         "time-to-second-token": "Time To Second Token (ms)",
         "request-latency": "Request Latency (ms)",
         "inter-token-latency": "Inter Token Latency (ms)",
+        "output-token-throughput-per-user": "Output Token Throughput Per User (tokens/sec/user)",
     }
 
     def can_handle_directory(self) -> bool:
@@ -75,16 +77,16 @@ class AIDynamoReportGenerationStrategy(ReportGenerationStrategy):
 
         return csv_files[0]
 
-    def _extract_metric_value(self, header: list[str], row: list[str], metric_idx: int) -> float | None:
+    def _extract_metric_value(self, header: list[str], row: list[str], metric_idx: int, metric_type: str = 'avg') -> float | None:
         if "Value" in header:
             value_idx = header.index("Value")
             return float(row[value_idx].replace(",", ""))
-        elif "avg" in header:
-            avg_idx = header.index("avg")
-            return float(row[avg_idx].replace(",", ""))
+        elif metric_type in header:
+            metric_idx = header.index(metric_type)
+            return float(row[metric_idx].replace(",", ""))
         return None
 
-    def _find_metric_in_section(self, section: list[list[str]], metric_name: str) -> float | None:
+    def _find_metric_in_section(self, section: list[list[str]], metric_name: str, metric_type: str = "avg") -> float | None:
         if not section:
             return None
 
@@ -95,17 +97,17 @@ class AIDynamoReportGenerationStrategy(ReportGenerationStrategy):
         metric_idx = header.index("Metric")
         for row in section[1:]:
             if row[metric_idx] == metric_name:
-                return self._extract_metric_value(header, row, metric_idx)
+                return self._extract_metric_value(header, row, metric_idx, metric_type)
         return None
 
-    def _read_metric_from_csv(self, metric_name: str) -> float:
+    def _read_metric_from_csv(self, metric_name: str, metric_type: str = "avg") -> float:
         source_csv = self._find_csv_file()
         if not source_csv:
             return METRIC_ERROR
 
         sections = self._read_csv_sections(source_csv)
         for section in sections:
-            value = self._find_metric_in_section(section, metric_name)
+            value = self._find_metric_in_section(section, metric_name, metric_type)
             if value is not None:
                 return value
         return METRIC_ERROR

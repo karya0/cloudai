@@ -115,8 +115,8 @@ class AIDynamoTestDefinition(TestDefinition):
             logging.warning("gpus_per_node is None or 0, skipping Overall Output Tokens per Second per GPU calculation.")
             return 0
 
-        num_prefill_nodes = self.cmd_args.dynamo.num_prefill_nodes
-        num_decode_nodes = self.cmd_args.dynamo.num_decode_nodes
+        num_prefill_nodes = self.cmd_args.dynamo.prefill_worker.num_nodes
+        num_decode_nodes = self.cmd_args.dynamo.decode_worker.num_nodes
 
         return (num_prefill_nodes + num_decode_nodes) * gpus_per_node
 
