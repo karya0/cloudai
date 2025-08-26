@@ -3,9 +3,8 @@
 # CloudAI params
 RESULTS_DIR="/cloudai_run_results"
 HUGGINGFACE_HOME="/root/.cache/huggingface"
-DONE_MARKER="frontend_done.marker"
-FATAL_ERROR_MARKER="fatal_error.marker"
-: "${DYNAMO_WORKER_ERROR_PATTERN:=zmq\.error\.ZMQError:.*Address already in use|UCX.*ERROR|ERROR core\.run_engine_core:.*EngineCore failed to start|ERROR multiproc_executor\.worker_busy_loop:.*WorkerProc hit an exception|EngineDeadError|EngineCore encountered an issue}"
+DONE_MARKER="dynamo_frontend_done.marker"
+FATAL_ERROR_MARKER="dynamo_fatal_error.marker"
 NODE_ROLES_FILE="node_roles.log"
 
 export DYN_SDK_DISABLE_ANSI_LOGGING=1
@@ -49,6 +48,7 @@ dynamo_args["multiple-prefill-workers-per-node"]="true"
 dynamo_args["multiple-decode-workers-per-node"]="true"
 dynamo_args["prefill-initialized-regex"]="prefill.*initialized"
 dynamo_args["decode-initialized-regex"]="decode.*initialized"
+dynamo_args["worker-error-pattern"]="zmq.error.ZMQError:.Address.already.in.use|UCX.*ERROR|ERROR.core.run_engine_core:.EngineCore.failed.to.start|ERROR.multiproc_executor.worker_busy_loop:.WorkerProc.hit.an.exception|EngineDeadError|EngineCore.encountered.an.issue"
 
 # sglang-specific optional ports. Ignored by vllm.
 dynamo_args["sgl-http-port"]=9001
@@ -175,6 +175,21 @@ _apply_genai_perf_section_args() {
   genai_perf_args["--endpoint"]="${dynamo_args["endpoint"]}"
   genai_perf_args["--artifact-dir"]="${RESULTS_DIR}/${GENAI_PERF_ARTIFACT_DIR}/"
   genai_perf_args["--profile-export-file"]="${GENAI_PERF_PROFILE_EXPORT_FILE}"
+
+  if [[ ! -v genai_perf_args["--warmup-request-count"] ]]; then
+    genai_perf_args["--warmup-request-count"]=$(( 2 * ${genai_perf_args["--concurrency"]} ))
+  fi
+  if [[ ! -v genai_perf_args["--request-count"] ]]; then
+    genai_perf_args["--request-count"]=$(( 3 * ${genai_perf_args["--concurrency"]} ))
+  fi
+
+  # Make sure that we have at least 8 warmup requests and at least 16 total requests.
+  if [[ ${genai_perf_args["--warmup-request-count"]} -lt ${dynamo_args["min-warmup-request-count"]} ]]; then
+    genai_perf_args["--warmup-request-count"]=${dynamo_args["min-warmup-request-count"]}
+  fi
+  if [[ ${genai_perf_args["--request-count"]} -lt ${dynamo_args["min-request-count"]} ]]; then
+    genai_perf_args["--request-count"]=${dynamo_args["min-request-count"]}
+  fi
 }
 
 _parse_cli_pairs() {
@@ -368,15 +383,20 @@ _detect_fatal_once() {
   _is_vllm || return 0
   local n=0
   # Worker logs and UCX logs
-  n=$(( n + $(grep -E "${DYNAMO_WORKER_ERROR_PATTERN}" "${RESULTS_DIR}"/dynamo_*.log 2>/dev/null | wc -l || true) ))
+  n=$(( n + $(grep -E "${dynamo_args["worker-error-pattern"]}" "${RESULTS_DIR}"/dynamo_*.log 2>/dev/null | wc -l || true) ))
   n=$(( n + $(grep -E "UCX.*ERROR" "${RESULTS_DIR}"/ucx_log_*.log 2>/dev/null | wc -l || true) ))
   echo "${n}"
 }
 
 exit_on_error() {
   local fatal=$(_detect_fatal_once)
+  if [ -f "${DONE_MARKER}" ]; then
+    log "DONE_MARKER found. Skipping error check."
+    return
+  fi
   if [[ "${fatal}" -gt 0 ]]; then
     log "FATAL: detected ${fatal} fatal error line(s). Writing ${FATAL_ERROR_MARKER} and terminating."
+    sleep 1
     touch "${FATAL_ERROR_MARKER}"
     # Try to stop background jobs for a cleaner exit, but do not loop
     kill $(jobs -p) 2>/dev/null || true
@@ -715,6 +735,7 @@ function launch_genai_perf()
   ${dynamo_args["genai-perf-cmd"]} ${genai_perf_arguments} ${genai_perf_args["--extra-args"]} > ${RESULTS_DIR}/genai_perf.log 2>&1
 
   log "Done with genai-perf run"
+  touch "$DONE_MARKER"
 }
 
 function wait_for_frontend_marker()
@@ -765,8 +786,7 @@ function main()
   fi
 
   if _is_frontend_node; then
-    launch_genai_perf
-    touch "$DONE_MARKER"
+    launch_genai_perf &
   fi
 
   wait_for_frontend_marker
