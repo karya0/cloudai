@@ -106,7 +106,7 @@ class TestRunModel(BaseModel):
             return v
             
         if isinstance(v, dict):
-            has_bo_fields = {'sobol_num_trials', 'botorch_num_trials', 'seed_parameters'} & v.keys()
+            has_bo_fields = {'sobol_num_trials', 'botorch_num_trials', 'seed_parameters', 'random_seed'} & v.keys()
             
             is_bo_agent = v.get('agent_type') == 'bo_gp'
             
@@ -119,6 +119,8 @@ class TestRunModel(BaseModel):
 
     def tdef_model_dump(self, by_alias: bool) -> dict:
         """Return a dictionary with non-None values that correspond to the test definition fields."""
+        agent_config_dump = self.agent_config.model_dump() if self.agent_config else None
+
         data = {
             "name": self.name,
             "description": self.description,
@@ -126,6 +128,7 @@ class TestRunModel(BaseModel):
             "agent": self.agent,
             "agent_steps": self.agent_steps,
             "agent_metrics": self.agent_metrics,
+            "agent_config": agent_config_dump,  
             "agent_reward_function": self.agent_reward_function,
             "extra_container_mounts": self.extra_container_mounts,
             "extra_env_vars": self.extra_env_vars if self.extra_env_vars else None,
