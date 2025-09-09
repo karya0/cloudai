@@ -121,6 +121,6 @@ def custom_reward_3(observation: List[float]) -> float:
     ttft_penalty = math.log(ttft + 1)  
     itl_penalty = math.log(itl + 1)
     
-    reward = throughput_reward - 0.7 * ttft_penalty - 0.1 * itl_penalty
+    reward = 5.0 * throughput_reward - 0.7 * ttft_penalty - 0.1 * itl_penalty
     
     return reward
