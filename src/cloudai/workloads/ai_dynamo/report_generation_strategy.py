@@ -121,7 +121,7 @@ class AIDynamoReportGenerationStrategy(ReportGenerationStrategy):
         if total_gpus == 0:
             return METRIC_ERROR
 
-        return output_token_throughput / total_gpus
+        return round(output_token_throughput / total_gpus, 2)
 
     def get_metric(self, metric: str) -> float:
         if metric not in self.metrics:

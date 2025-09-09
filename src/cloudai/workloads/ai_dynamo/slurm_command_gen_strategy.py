@@ -139,7 +139,7 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
 
         wrapper = [
             "num_retries=${DYNAMO_NUM_RETRY_ON_FAILURE:-0}",
-            "fatal_file_name=$out_dir/${DYNAMO_FATAL_ERROR_FILE:-dynamo_fatal_error.marker}",
+            f"fatal_file_name={out_dir}/${{DYNAMO_FATAL_ERROR_FILE:-dynamo_fatal_error.marker}}",
             "for try in $(seq 0 $num_retries); do",
             '  echo "Try $try of $num_retries"',
             f"  rm -f $fatal_file_name 2>/dev/null || true",
