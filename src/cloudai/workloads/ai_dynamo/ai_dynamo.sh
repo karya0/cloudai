@@ -55,13 +55,14 @@ dynamo_args["sgl-http-port"]=9001
 dynamo_args["prefill-port"]=30011
 dynamo_args["decode-port"]=30021
 
-# GenAI Perf params
-GENAI_PERF_PROFILE_EXPORT_FILE="profile.json"
-GENAI_PERF_ARTIFACT_DIR="genai_perf_artifacts"
-
 function log()
 {
-  echo "[$(date --iso-8601=ns) $(hostname)]: $@"
+  echo "[$(date --rfc-3339=s) $(hostname)]: " "$@"
+}
+
+function min()
+{
+  echo "$(( $1 < $2 ? $1 : $2 ))"
 }
 
 _is_vllm() { [[ "${dynamo_args["backend"]}" == "vllm" ]]; }
@@ -123,15 +124,6 @@ _resolve_host_ip() {
 }
 
 _apply_sglang_section_args() {
-  prefill_args["--port"]=${dynamo_args["prefill-port"]}
-  decode_args["--port"]=${dynamo_args["decode-port"]}
-  prefill_args["--served-model-name"]=${dynamo_args["model"]}
-  decode_args["--served-model-name"]=${dynamo_args["model"]}
-
-  # model-path must point to HF cache for sglang
-  prefill_args["--model-path"]="${HUGGINGFACE_HOME}"
-  decode_args["--model-path"]="${HUGGINGFACE_HOME}"
-
   local self="$(_current_node_name)"
   local gpn="$(_gpus_per_node)"
 
@@ -170,25 +162,14 @@ _apply_sglang_section_args() {
 }
 
 _apply_genai_perf_section_args() {
-  genai_perf_args["--model"]="${dynamo_args["model"]}"
-  genai_perf_args["--url"]="${dynamo_args["url"]}"
-  genai_perf_args["--endpoint"]="${dynamo_args["endpoint"]}"
-  genai_perf_args["--artifact-dir"]="${RESULTS_DIR}/${GENAI_PERF_ARTIFACT_DIR}/"
-  genai_perf_args["--profile-export-file"]="${GENAI_PERF_PROFILE_EXPORT_FILE}"
-
   if [[ ! -v genai_perf_args["--warmup-request-count"] ]]; then
-    genai_perf_args["--warmup-request-count"]=$(( 2 * ${genai_perf_args["--concurrency"]} ))
-  fi
-  if [[ ! -v genai_perf_args["--request-count"] ]]; then
-    genai_perf_args["--request-count"]=$(( 3 * ${genai_perf_args["--concurrency"]} ))
+    genai_perf_args["--warmup-request-count"]=$(( ${dynamo_args["warmup-request-multiplier"]} * ${genai_perf_args["--concurrency"]} ))
+    genai_perf_args["--warmup-request-count"]=$(min ${genai_perf_args["--warmup-request-count"]} ${dynamo_args["min-warmup-request-count"]})
   fi
 
-  # Make sure that we have at least 8 warmup requests and at least 16 total requests.
-  if [[ ${genai_perf_args["--warmup-request-count"]} -lt ${dynamo_args["min-warmup-request-count"]} ]]; then
-    genai_perf_args["--warmup-request-count"]=${dynamo_args["min-warmup-request-count"]}
-  fi
-  if [[ ${genai_perf_args["--request-count"]} -lt ${dynamo_args["min-request-count"]} ]]; then
-    genai_perf_args["--request-count"]=${dynamo_args["min-request-count"]}
+  if [[ ! -v genai_perf_args["--request-count"] ]]; then
+    genai_perf_args["--request-count"]=$(( ${dynamo_args["actual-request-multiplier"]} * ${genai_perf_args["--concurrency"]} ))
+    genai_perf_args["--request-count"]=$(min ${genai_perf_args["--request-count"]} ${dynamo_args["min-request-count"]})
   fi
 }
 
@@ -268,9 +249,6 @@ _patch_dynamo_args() {
 }
 
 _patch_section_args() {
-  prefill_args["--model"]="${dynamo_args["model"]}"
-  decode_args["--model"]="${dynamo_args["model"]}"
-
   if _is_sglang; then
     _apply_sglang_section_args
   fi
@@ -371,9 +349,17 @@ function array_to_args()
        [[ "$key" == "--num-nodes" ]] || \
        [[ "$key" == "--nodes" ]]; then
       continue
-    else
-      result+="${key} ${arr[$key]} "
     fi
+
+    shopt -s nocasematch
+    val="${arr[$key]}"
+    val=${val//%MODEL%/${dynamo_args["model"]}}
+    val=${val//%PORT%/${dynamo_args["port"]}}
+    val=${val//%URL%/${dynamo_args["url"]}}
+    val=${val//%ENDPOINT%/${dynamo_args["endpoint"]}}
+    val=${val//%RESULTS_DIR%/${RESULTS_DIR}}
+    val=${val//%HUGGINGFACE_HOME%/${HUGGINGFACE_HOME}}
+    result+="${key} ${val} "
   done
   echo "$result"
 }
@@ -388,6 +374,17 @@ _detect_fatal_once() {
   echo "${n}"
 }
 
+function perform_exit()
+{
+  local exit_code=$1
+  local sleep_before_exit="${dynamo_args["sleep-before-exit"]}"
+  if [[ -n "${sleep_before_exit}" ]]; then
+    log "Sleeping for ${sleep_before_exit} seconds before exit"
+    sleep "${sleep_before_exit}"
+  fi
+  exit "${exit_code}"
+}
+
 exit_on_error() {
   local fatal=$(_detect_fatal_once)
   if [ -f "${DONE_MARKER}" ]; then
@@ -397,11 +394,13 @@ exit_on_error() {
   if [[ "${fatal}" -gt 0 ]]; then
     log "FATAL: detected ${fatal} fatal error line(s). Writing ${FATAL_ERROR_MARKER} and terminating."
     sleep 1
+
     touch "${FATAL_ERROR_MARKER}"
+    grep -E "${dynamo_args["worker-error-pattern"]}|UCX.*ERROR" "${RESULTS_DIR}"/*.log 2>/dev/null > "${FATAL_ERROR_MARKER}"
     # Try to stop background jobs for a cleaner exit, but do not loop
     kill $(jobs -p) 2>/dev/null || true
     # Exit non-zero so srun can retry
-    exit 1
+    perform_exit 1
   fi
 }
 
@@ -799,3 +798,5 @@ log "env: $(env)"
 log "Starting main"
 main
 log "Done with main"
+
+perform_exit 0
