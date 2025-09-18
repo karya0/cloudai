@@ -79,7 +79,7 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
         ]
         args.extend(
             self._get_toml_args(
-                td.cmd_args.dynamo, "--dynamo-", exclude=["prefill_worker", "decode_worker", "genai_perf", "lmbench", "lmcache"]
+                td.cmd_args.dynamo, "--dynamo-", exclude=["prefill_worker", "decode_worker"]
             )
         )
 
