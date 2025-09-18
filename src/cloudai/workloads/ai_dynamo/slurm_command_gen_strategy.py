@@ -79,7 +79,7 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
         ]
         args.extend(
             self._get_toml_args(
-                td.cmd_args.dynamo, "--dynamo-", exclude=["prefill_worker", "decode_worker", "genai_perf"]
+                td.cmd_args.dynamo, "--dynamo-", exclude=["prefill_worker", "decode_worker", "genai_perf", "lmbench", "lmcache"]
             )
         )
 
@@ -111,6 +111,8 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
         args.extend(self._get_toml_args(td.cmd_args.dynamo.prefill_worker, "--prefill-"))
         args.extend(self._get_toml_args(td.cmd_args.dynamo.decode_worker, "--decode-"))
         args.extend(self._get_toml_args(td.cmd_args.genai_perf, "--genai-perf-"))
+        args.extend(self._get_toml_args(td.cmd_args.lmcache, "--lmcache-"))
+        args.extend(self._get_toml_args(td.cmd_args.lmbench, "--lmbench-"))
 
         return args
 

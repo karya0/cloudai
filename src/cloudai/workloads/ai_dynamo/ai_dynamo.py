@@ -63,6 +63,18 @@ class GenAIPerfArgs(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class LMCacheArgs(BaseModel):
+    """Arguments for LMCache."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class LMBenchArgs(BaseModel):
+    """Arguments for LMBench."""
+
+    model_config = ConfigDict(extra="allow")
+
+
 class AIDynamoCmdArgs(CmdArgs):
     """Arguments for AI Dynamo."""
 
@@ -72,6 +84,8 @@ class AIDynamoCmdArgs(CmdArgs):
     skip_huggingface_home_host_path_validation: bool = False
     dynamo: AIDynamoArgs
     genai_perf: GenAIPerfArgs
+    lmcache: LMCacheArgs
+    lmbench: LMBenchArgs
     gpus_per_node: int
 
     @field_serializer("huggingface_home_host_path", "huggingface_home_container_path")
@@ -85,6 +99,7 @@ class AIDynamoTestDefinition(TestDefinition):
     cmd_args: AIDynamoCmdArgs
     _docker_image: Optional[DockerImage] = None
     script: File = File(Path(__file__).parent.parent / "ai_dynamo/ai_dynamo.sh")
+    calc_percentile_csv: File = File(Path(__file__).parent.parent / "ai_dynamo/calc_percentile_csv.py")
     dynamo_repo: GitRepo = GitRepo(
         url="https://github.com/ai-dynamo/dynamo.git", commit="f7e468c7e8ff0d1426db987564e60572167e8464"
     )
@@ -98,7 +113,7 @@ class AIDynamoTestDefinition(TestDefinition):
 
     @property
     def installables(self) -> list[Installable]:
-        return [self.docker_image, self.script, self.dynamo_repo]
+        return [self.docker_image, self.script, self.dynamo_repo, self.calc_percentile_csv]
 
     @property
     def huggingface_home_host_path(self) -> Path:
