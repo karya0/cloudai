@@ -39,6 +39,7 @@ class AIDynamoSlurmCommandGenStrategy(SlurmCommandGenStrategy):
             f"{dynamo_repo_path}:{dynamo_repo_path}",
             f"{td.cmd_args.huggingface_home_host_path}:{td.cmd_args.huggingface_home_container_path}",
             f"{td.script.installed_path.absolute()!s}:{td.script.installed_path.absolute()!s}",
+            f"{td.calc_percentile_csv.installed_path.absolute()!s}:{td.calc_percentile_csv.installed_path.absolute()!s}",
         ]
 
         if td.cmd_args.dynamo.backend == "sglang":

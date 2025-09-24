@@ -22,6 +22,8 @@ export APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=1
 declare -A prefill_args
 declare -A decode_args
 declare -A genai_perf_args
+declare -A lmbench_args
+declare -A lmcache_config
 
 declare -A dynamo_args
 dynamo_args["backend"]="vllm"
@@ -57,7 +59,7 @@ dynamo_args["decode-port"]=30021
 
 function log()
 {
-  echo "[$(date --rfc-3339=s) $(hostname)]: " "$@"
+  echo "[$(date +%F\ %T) $(hostname)]: " "$@"
 }
 
 function min()
@@ -187,6 +189,10 @@ _parse_cli_pairs() {
         decode_args["--${key#--decode-}"]="$2" ;;
       --genai-perf-*)
         genai_perf_args["--${key#--genai-perf-}"]="$2" ;;
+      --lmcache-*)
+        lmcache_config["${key#--lmcache-}"]="$2" ;;
+      --lmbench-*)
+        lmbench_args["--${key#--lmbench-}"]="$2" ;;
       --huggingface-home)
         HUGGINGFACE_HOME="$2" ;;
       --results-dir)
@@ -327,6 +333,7 @@ _dump_args() {
   log "Prefill args: $(for key in "${!prefill_args[@]}"; do echo -n "$key: ${prefill_args[$key]}; "; done)"
   log "Decode args: $(for key in "${!decode_args[@]}"; do echo -n "$key: ${decode_args[$key]}; " ; done)"
   log "GenAI perf args: $(for key in "${!genai_perf_args[@]}"; do echo -n "$key: ${genai_perf_args[$key]}; "; done)"
+  log "LMBench args: $(for key in "${!lmbench_args[@]}"; do echo -n "$key: ${lmbench_args[$key]}; "; done)"
 }
 
 function parse_args()
@@ -338,6 +345,17 @@ function parse_args()
   _patch_section_args
   _compute_worker_allocation
   _dump_args
+}
+
+function replace_placeholders() {
+  local val="$1"
+  val=${val//%MODEL%/${dynamo_args["model"]}}
+  val=${val//%PORT%/${dynamo_args["port"]}}
+  val=${val//%URL%/${dynamo_args["url"]}}
+  val=${val//%ENDPOINT%/${dynamo_args["endpoint"]}}
+  val=${val//%RESULTS_DIR%/${RESULTS_DIR}}
+  val=${val//%HUGGINGFACE_HOME%/${HUGGINGFACE_HOME}}
+  echo "$val"
 }
 
 function array_to_args()
@@ -352,13 +370,7 @@ function array_to_args()
     fi
 
     shopt -s nocasematch
-    val="${arr[$key]}"
-    val=${val//%MODEL%/${dynamo_args["model"]}}
-    val=${val//%PORT%/${dynamo_args["port"]}}
-    val=${val//%URL%/${dynamo_args["url"]}}
-    val=${val//%ENDPOINT%/${dynamo_args["endpoint"]}}
-    val=${val//%RESULTS_DIR%/${RESULTS_DIR}}
-    val=${val//%HUGGINGFACE_HOME%/${HUGGINGFACE_HOME}}
+    val=$(replace_placeholders "${arr[$key]}")
     result+="${key} ${val} "
   done
   echo "$result"
@@ -476,6 +488,18 @@ _is_prefill_node() {
   [[ "${dynamo_args["prefill-nodes"]}" == *"$name"* ]]
 }
 
+_is_genai_perf_workload() {
+  [[ "${dynamo_args["workload-type"]}" == "genai-perf" ]]
+}
+
+_is_lmbench_workload() {
+  [[ "${dynamo_args["workload-type"]}" == "lmbench" ]]
+}
+
+_is_single_shot_workload() {
+  [[ "${dynamo_args["workload-type"]}" == "single-shot" ]]
+}
+
 _init_runtime_env() {
   if _is_vllm; then
     export HF_HOME="${HUGGINGFACE_HOME}"
@@ -490,6 +514,10 @@ _init_runtime_env() {
 
 function launch_node_setup_cmd()
 {
+  log "Installing uv"
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  source $HOME/.local/bin/env
+
   if [[ -n "${dynamo_args["node-setup-cmd"]}" ]]; then
     log "Launching node setup command: ${dynamo_args["node-setup-cmd"]}"
     bash -c "${dynamo_args["node-setup-cmd"]}"
@@ -690,13 +718,33 @@ function launch_prefill()
   done
 }
 
+function launch_lmcache_controller()
+{
+  log "Launching LMCache controller with cmd: ${dynamo_args["lmcache-controller-cmd"]}"
+  ${dynamo_args["lmcache-controller-cmd"]} > ${RESULTS_DIR}/lmcache_controller.log 2>&1
+}
+
+function clear_lmcache()
+{
+  log "Clearing LMCache"
+
+  response=$(curl -X POST http://${lmcache_config["controller_url"]}/clear \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instance_id": "lmcache_default_instance",
+    "location": "LocalCPUBackend"
+  }')
+
+  log "LMCache cleared. Response: $response"
+}
+
 function wait_for_dynamo_frontend()
 {
-  local want_prefill=$(_expected_ready_prefill)
+  local want_prefill=0 #$(_expected_ready_prefill)
   local want_decode=$(_expected_ready_decode)
 
   while :; do
-    local have_prefill=$(_count_initialized_prefill)
+    local have_prefill=0 #$(_count_initialized_prefill)
     local have_decode=$(_count_initialized_decode)
 
     if [[ $have_prefill -ge $want_prefill && $have_decode -ge $want_decode ]]; then
@@ -734,6 +782,151 @@ function launch_genai_perf()
   ${dynamo_args["genai-perf-cmd"]} ${genai_perf_arguments} ${genai_perf_args["--extra-args"]} > ${RESULTS_DIR}/genai_perf.log 2>&1
 
   log "Done with genai-perf run"
+
+  local num_gpus="$(_gpus_per_node)"
+  local total_gpus=$(( $num_gpus * $SLURM_JOB_NUM_NODES ))
+
+  profile_path=$(find . -type f -name "profile_genai_perf.csv" -print -quit)
+  if [[ -f "$profile_path" ]]; then
+    output_tokens_per_second=$(grep "output_tokens_per_second" $profile_path | awk '{print $2}')
+    output_tokens_per_second_per_gpu=$(( $output_tokens_per_second / $total_gpus ))
+    grep ".*,.*,.*,.*" $profile_path > $RESULTS_DIR/report.csv
+    echo "Output tokens per second per gpu,$output_tokens_per_second_per_gpu,0,0,0,0,0,0,0,0,0,0,0" >> $RESULTS_DIR/report.csv
+  fi
+
+  touch "$DONE_MARKER"
+}
+
+function setup_lmcache()
+{
+  if [[ "$ENABLE_LMCACHE" != "1" ]]; then
+    return
+  fi
+
+  local lmcache_path="${dynamo_args["lmcache-path"]}"
+  log "Installing LMCache using: uv pip install $lmcache_path"
+  uv pip install -e $lmcache_path
+
+  local storage_cachedir="${dynamo_args["storage-cache-dir"]}/${dynamo_args["frontend-node"]}/"
+  if [[ ${dynamo_args["clear-storage-cache-dir"]} == "true" ]]; then
+    rm -rf $storage_cachedir 2>/dev/null || true
+    mkdir -p $storage_cachedir
+  fi
+
+  export LMCACHE_CONFIG_FILE=$RESULTS_DIR/lmcache-nixl-config.yaml
+  export CUFILE_ENV_PATH_JSON="$RESULTS_DIR/cufile.json"
+
+  rm -f $LMCACHE_CONFIG_FILE
+
+  for key in "${!lmcache_config[@]}"; do
+    shopt -s nocasematch
+    if [[ "$key" == "extra_config"* ]]; then
+      continue
+    fi
+
+    val="${lmcache_config[$key]}"
+    echo "$key: $val" >> $LMCACHE_CONFIG_FILE
+  done
+
+  echo "extra_config:" >> $LMCACHE_CONFIG_FILE
+  for key in "${!lmcache_config[@]}"; do
+    shopt -s nocasematch
+    if [[ "$key" == "extra_config"* ]]; then
+      nkey="${key#extra_config_}"
+      val="${lmcache_config[$key]}"
+      val=${val//%CACHEDIR%/${storage_cachedir}}
+      echo "    $nkey: $val" >> $LMCACHE_CONFIG_FILE
+    fi
+  done
+
+  cat <<EOF > $CUFILE_ENV_PATH_JSON
+{
+    // NOTE : Application can override custom configuration via export CUFILE_ENV_PATH_JSON=<filepath>
+    // e.g : export CUFILE_ENV_PATH_JSON="/home/<xxx>/cufile.json"
+            "properties": {
+                            // allow compat mode, this will enable use of cuFile posix read/writes
+                            "allow_compat_mode": true,
+                            // max IO chunk size (parameter should be multiples of 64K) used by cuFileRead/Write internally per IO request
+                            "max_direct_io_size_kb" : 16384,
+                            // device memory size (parameter should be 4K aligned) for reserving bounce buffers for the entire GPU
+                            "max_device_cache_size_kb" : 2097152,
+                            // Note: ensure (max_device_cache_size_kb / per_buffer_cache_size_kb) >= io_batchsize
+                            // per-io bounce-buffer size (parameter should be multiples of 64K) ranging from 1024kb to 16384kb
+                            "per_buffer_cache_size_kb": 16384,
+                            // limit on maximum device memory size (parameter should be 4K aligned) that can be pinned for a given process
+                            "max_device_pinned_mem_size_kb" : 33554432,
+
+                            // posix bounce buffer pool size allocations
+                            "posix_pool_slab_size_kb" : [16384],
+                            // posix bounce buffer pool max counts
+                            "posix_pool_slab_count": [1024]
+            },
+  "logging": {
+    "dir": "$RESULTS_DIR",
+    "level": "${CUFILE_LOG_LEVEL:-info}"
+  }
+}
+EOF
+}
+
+function launch_single_shot()
+{
+  wait_for_dynamo_frontend
+  local isl="${dynamo_args["isl"]}"
+  local lmcache_path="${dynamo_args["lmcache-path"]}"
+  local url="${dynamo_args["url"]}"
+  local cache_hit_rate="${dynamo_args["cache-hit-rate"]:-1}"
+
+  local max_ctx_tokens_following=$(( $isl / $cache_hit_rate ))
+
+  log "Launching single shot with lmcache path: $lmcache_path"
+  log "python $lmcache_path/examples/online_session/openai_chat_completion_client.py --model ${dynamo_args["model"]} --api_base $url/v1 --max_ctx_tokens 131072 --num_following 1 "
+
+  pushd $lmcache_path/examples/online_session
+  log "python $lmcache_path/examples/online_session/openai_chat_completion_client.py --model ${dynamo_args["model"]} --api_base $url/v1 --max_ctx_tokens ${dynamo_args["isl"]} --context_file $lmcache_path/examples/online_session/salt.7.txt --out $RESULTS_DIR/single_shot.jsonl --num_following 1"
+
+  python $lmcache_path/examples/online_session/openai_chat_completion_client.py \
+    --model ${dynamo_args["model"]} \
+    --api_base $url/v1 \
+    --max_ctx_tokens $isl \
+    --max_ctx_tokens_following ${max_ctx_tokens_following} \
+    --flush_cache \
+    --context_file $lmcache_path/examples/online_session/salt.7.txt \
+    --out $RESULTS_DIR/single_shot.jsonl \
+    --osl 10 \
+    --num_following 1 > $RESULTS_DIR/single_shot_first_run.log 2>&1
+
+  python -c "import pandas as pd; pd.read_json('$RESULTS_DIR/single_shot.jsonl', lines=True).to_csv('$RESULTS_DIR/report.csv', float_format='%.3f',index=False)"
+
+  popd
+
+  touch "$DONE_MARKER"
+}
+
+function launch_lmbench()
+{
+  wait_for_dynamo_frontend
+
+  # run LMBenchmark, adjust the model name if you are using a different model
+  # for detail how to config and run LMBenchmark: https://github.com/LMCache/LMBenchmark/tree/main/synthetic-multi-round-qa
+  local lmbench_dir="${dynamo_args["lmbench-dir"]}"
+  local log_file="${RESULTS_DIR}/lmbench.log"
+  
+  cmd="${dynamo_args["lmbench-cmd"]}"
+  cmd=$(replace_placeholders "$cmd")
+  cmd=${cmd//%LMBENCH_DIR%/${lmbench_dir}}
+
+  pushd $RESULTS_DIR
+  local lmbench_arguments=$(array_to_args lmbench_args)
+  log "Launching lmbench with args: $cmd $lmbench_arguments ${lmbench_args["--extra-args"]}"
+
+  $cmd ${lmbench_arguments} ${lmbench_args["--extra-args"]} > ${log_file} 2>&1
+
+  log "Done with lmbench run"
+
+  log "Summarizing lmbench run"
+  python3 /cloudai_install/calc_percentile_csv.py $RESULTS_DIR/lmcache_bench_output.csv -o $RESULTS_DIR/report.csv --gpus $(_gpus_per_node)
+
   touch "$DONE_MARKER"
 }
 
@@ -748,6 +941,24 @@ function wait_for_frontend_marker()
   log "Done marker found."
 }
 
+function log_gpu_utilization()
+{
+  # Check if nvidia-smi is available
+  if ! command -v nvidia-smi &> /dev/null; then
+    log "Error: nvidia-smi not found"
+    return
+  fi
+
+  wait_for_dynamo_frontend
+  log "Starting GPU utilization monitoring"
+
+  nvidia-smi \
+    --query-gpu=timestamp,name,pci.bus_id,pstate,pcie.link.gen.max,pcie.link.gen.current,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used \
+    --format=csv \
+    -l 5 \
+    -f ${RESULTS_DIR}/gpu_utilization-${SLURM_NODEID}.csv
+}
+
 function main()
 {
   _init_runtime_env
@@ -760,9 +971,14 @@ function main()
     cd ${dynamo_args["workspace-path"]}
   fi
 
+  cd $RESULTS_DIR
+
+  log_gpu_utilization &
+
   if _is_frontend_node; then
     log "Node ID: $SLURM_NODEID, Role: frontend"
     log_node_role "$(_current_node_name)" "frontend"
+    setup_lmcache
     launch_etcd &
     launch_nats &
     wait_for_etcd
@@ -781,11 +997,21 @@ function main()
   if _is_prefill_node; then
     log "Node ID: $SLURM_NODEID, Role: prefill"
     log_node_role "$(_current_node_name)" "prefill"
-    launch_prefill &
+    #launch_prefill &
   fi
 
   if _is_frontend_node; then
-    launch_genai_perf &
+    launch_lmcache_controller &
+
+    if _is_genai_perf_workload; then
+      launch_genai_perf &
+    fi
+    if _is_lmbench_workload; then
+      launch_lmbench &
+    fi
+    if _is_single_shot_workload; then
+      launch_single_shot &
+    fi
   fi
 
   wait_for_frontend_marker
