@@ -720,6 +720,10 @@ function launch_prefill()
 
 function launch_lmcache_controller()
 {
+  if [[ "$ENABLE_LMCACHE" != "1" ]]; then
+    return
+  fi
+
   log "Launching LMCache controller with cmd: ${dynamo_args["lmcache-controller-cmd"]}"
   ${dynamo_args["lmcache-controller-cmd"]} > ${RESULTS_DIR}/lmcache_controller.log 2>&1
 }
@@ -788,6 +792,7 @@ function launch_genai_perf()
 
   profile_path=$(find . -type f -name "profile_genai_perf.csv" -print -quit)
   if [[ -f "$profile_path" ]]; then
+    python3 /cloudai_install/calc_percentile_csv.py $profile_path -o $RESULTS_DIR/report.csv
     output_tokens_per_second=$(grep "output_tokens_per_second" $profile_path | awk '{print $2}')
     output_tokens_per_second_per_gpu=$(( $output_tokens_per_second / $total_gpus ))
     grep ".*,.*,.*,.*" $profile_path > $RESULTS_DIR/report.csv
@@ -875,9 +880,9 @@ function launch_single_shot()
   local isl="${dynamo_args["isl"]}"
   local lmcache_path="${dynamo_args["lmcache-path"]}"
   local url="${dynamo_args["url"]}"
-  local cache_hit_rate="${dynamo_args["cache-hit-rate"]:-1}"
+  local cache_hit_pct="${dynamo_args["cache-hit-pct"]:-1}"
 
-  local max_ctx_tokens_following=$(( $isl / $cache_hit_rate ))
+  local max_ctx_tokens_following=$(( $isl * 100 / $cache_hit_pct ))
 
   log "Launching single shot with lmcache path: $lmcache_path"
   log "python $lmcache_path/examples/online_session/openai_chat_completion_client.py --model ${dynamo_args["model"]} --api_base $url/v1 --max_ctx_tokens 131072 --num_following 1 "
@@ -925,7 +930,7 @@ function launch_lmbench()
   log "Done with lmbench run"
 
   log "Summarizing lmbench run"
-  python3 /cloudai_install/calc_percentile_csv.py $RESULTS_DIR/lmcache_bench_output.csv -o $RESULTS_DIR/report.csv --gpus $(_gpus_per_node)
+  python3 /cloudai_install/calc_percentile_csv.py $RESULTS_DIR/lmcache_bench_output.csv -o $RESULTS_DIR/report.csv
 
   touch "$DONE_MARKER"
 }

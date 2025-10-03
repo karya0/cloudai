@@ -69,7 +69,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Summarize LMCACHE bench CSV metrics")
     parser.add_argument("input_csv", help="Path to input CSV (e.g., lmcache_bench_output_0.1.csv)")
     parser.add_argument("--output", "-o", help="Path to write summary CSV. Defaults to <input>_summary.csv")
-    parser.add_argument("--gpus", "-g", type=int, default=1, help="Number of GPUs. Defaults to 1.")
     args = parser.parse_args()
 
     input_path = args.input_csv
