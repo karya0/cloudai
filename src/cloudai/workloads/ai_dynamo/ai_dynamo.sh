@@ -917,13 +917,13 @@ function launch_single_shot()
     --model ${dynamo_args["model"]} \
     --api_base $url/v1 \
     --max_ctx_tokens $isl \
-    --max_ctx_tokens_following ${max_ctx_tokens_following} \
     --flush_cache \
     --context_file $lmcache_path/examples/online_session/salt.7.txt \
     --out $RESULTS_DIR/single_shot.jsonl \
     --osl 10 \
     --num_following 1 > $RESULTS_DIR/single_shot_first_run.log 2>&1
 
+    #--max_ctx_tokens_following ${max_ctx_tokens_following} \
   python -c "import pandas as pd; pd.read_json('$RESULTS_DIR/single_shot.jsonl', lines=True).to_csv('$RESULTS_DIR/report.csv', float_format='%.3f',index=False)"
 
   popd
