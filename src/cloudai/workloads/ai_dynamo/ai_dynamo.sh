@@ -802,6 +802,22 @@ function launch_genai_perf()
   touch "$DONE_MARKER"
 }
 
+function setup_kvbm()
+{
+  if [[ "$ENABLE_KVBM" != "1" ]]; then
+    return
+  fi
+
+  if [[ -z "${DYN_KVBM_DISK_CACHE_DIR}" ]]; then
+    log "ERROR: DYN_KVBM_DISK_CACHE_DIR is not set"
+    exit 1
+  fi
+
+  rm -rf ${DYN_KVBM_DISK_CACHE_DIR}
+  mkdir -p ${DYN_KVBM_DISK_CACHE_DIR}
+  chmod 755 ${DYN_KVBM_DISK_CACHE_DIR}
+}
+
 function setup_lmcache()
 {
   if [[ "$ENABLE_LMCACHE" != "1" ]]; then
@@ -984,6 +1000,7 @@ function main()
     log "Node ID: $SLURM_NODEID, Role: frontend"
     log_node_role "$(_current_node_name)" "frontend"
     setup_lmcache
+    setup_kvbm
     launch_etcd &
     launch_nats &
     wait_for_etcd
