@@ -802,64 +802,9 @@ function launch_genai_perf()
   touch "$DONE_MARKER"
 }
 
-function setup_kvbm()
+function setup_cufile()
 {
-  if [[ "$ENABLE_KVBM" != "1" ]]; then
-    return
-  fi
-
-  if [[ -z "${DYN_KVBM_DISK_CACHE_DIR}" ]]; then
-    log "ERROR: DYN_KVBM_DISK_CACHE_DIR is not set"
-    exit 1
-  fi
-
-  rm -rf ${DYN_KVBM_DISK_CACHE_DIR}
-  mkdir -p ${DYN_KVBM_DISK_CACHE_DIR}
-  chmod 755 ${DYN_KVBM_DISK_CACHE_DIR}
-}
-
-function setup_lmcache()
-{
-  if [[ "$ENABLE_LMCACHE" != "1" ]]; then
-    return
-  fi
-
-  local lmcache_path="${dynamo_args["lmcache-path"]}"
-  log "Installing LMCache using: uv pip install $lmcache_path"
-  uv pip install -e $lmcache_path
-
-  local storage_cachedir="${dynamo_args["storage-cache-dir"]}/${dynamo_args["frontend-node"]}/"
-  if [[ ${dynamo_args["clear-storage-cache-dir"]} == "true" ]]; then
-    rm -rf $storage_cachedir 2>/dev/null || true
-    mkdir -p $storage_cachedir
-  fi
-
-  export LMCACHE_CONFIG_FILE=$RESULTS_DIR/lmcache-nixl-config.yaml
   export CUFILE_ENV_PATH_JSON="$RESULTS_DIR/cufile.json"
-
-  rm -f $LMCACHE_CONFIG_FILE
-
-  for key in "${!lmcache_config[@]}"; do
-    shopt -s nocasematch
-    if [[ "$key" == "extra_config"* ]]; then
-      continue
-    fi
-
-    val="${lmcache_config[$key]}"
-    echo "$key: $val" >> $LMCACHE_CONFIG_FILE
-  done
-
-  echo "extra_config:" >> $LMCACHE_CONFIG_FILE
-  for key in "${!lmcache_config[@]}"; do
-    shopt -s nocasematch
-    if [[ "$key" == "extra_config"* ]]; then
-      nkey="${key#extra_config_}"
-      val="${lmcache_config[$key]}"
-      val=${val//%CACHEDIR%/${storage_cachedir}}
-      echo "    $nkey: $val" >> $LMCACHE_CONFIG_FILE
-    fi
-  done
-
   cat <<EOF > $CUFILE_ENV_PATH_JSON
 {
     // NOTE : Application can override custom configuration via export CUFILE_ENV_PATH_JSON=<filepath>
@@ -888,6 +833,68 @@ function setup_lmcache()
   }
 }
 EOF
+}
+
+
+function setup_kvbm()
+{
+  if [[ "$ENABLE_KVBM" != "1" ]]; then
+    return
+  fi
+
+  if [[ -z "${DYN_KVBM_DISK_CACHE_DIR}" ]]; then
+    log "ERROR: DYN_KVBM_DISK_CACHE_DIR is not set"
+    exit 1
+  fi
+
+  rm -rf ${DYN_KVBM_DISK_CACHE_DIR}
+  mkdir -p ${DYN_KVBM_DISK_CACHE_DIR}
+  chmod 755 ${DYN_KVBM_DISK_CACHE_DIR}
+
+  setup_cufile
+}
+
+function setup_lmcache()
+{
+  if [[ "$ENABLE_LMCACHE" != "1" ]]; then
+    return
+  fi
+
+  local lmcache_path="${dynamo_args["lmcache-path"]}"
+  log "Installing LMCache using: uv pip install $lmcache_path"
+  uv pip install -e $lmcache_path
+
+  local storage_cachedir="${dynamo_args["storage-cache-dir"]}/${dynamo_args["frontend-node"]}/"
+  if [[ ${dynamo_args["clear-storage-cache-dir"]} == "true" ]]; then
+    rm -rf $storage_cachedir 2>/dev/null || true
+    mkdir -p $storage_cachedir
+  fi
+
+  export LMCACHE_CONFIG_FILE=$RESULTS_DIR/lmcache-nixl-config.yaml
+
+  rm -f $LMCACHE_CONFIG_FILE
+
+  for key in "${!lmcache_config[@]}"; do
+    shopt -s nocasematch
+    if [[ "$key" == "extra_config"* ]]; then
+      continue
+    fi
+
+    val="${lmcache_config[$key]}"
+    echo "$key: $val" >> $LMCACHE_CONFIG_FILE
+  done
+
+  echo "extra_config:" >> $LMCACHE_CONFIG_FILE
+  for key in "${!lmcache_config[@]}"; do
+    shopt -s nocasematch
+    if [[ "$key" == "extra_config"* ]]; then
+      nkey="${key#extra_config_}"
+      val="${lmcache_config[$key]}"
+      val=${val//%CACHEDIR%/${storage_cachedir}}
+      echo "    $nkey: $val" >> $LMCACHE_CONFIG_FILE
+    fi
+  done
+  setup_cufile
 }
 
 function launch_single_shot()
