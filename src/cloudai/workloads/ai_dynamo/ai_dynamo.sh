@@ -10,11 +10,16 @@ NODE_ROLES_FILE="node_roles.log"
 export DYN_SDK_DISABLE_ANSI_LOGGING=1
 export VLLM_DISABLE_COLORED_OUTPUT=1
 export VLLM_NO_COLOR=1
+export VLLM_LOGGING_COLOR=0
+#export VLLM_LOGGING_CONFIG_PATH="/cloudai_install/vllm_logging_config.json"
+
 export ABSL_LOGGING_USE_COLOR=0
 export DYN_LOGGING_DISABLE_ANSI_COLORS=1
 
 export TERM=dumb
 export NO_COLOR=1
+export TQDM_DISABLE=1  # Disables tqdm progress bars globally
+export TQDM_MININTERVAL=999999  # Makes tqdm update very rarely
 
 export DEBIAN_FRONTEND=noninteractive
 export APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=1
@@ -489,15 +494,15 @@ _is_prefill_node() {
 }
 
 _is_genai_perf_workload() {
-  [[ "${dynamo_args["workload-type"]}" == "genai-perf" ]]
+  [[ "${dynamo_args["workload-type"]}" == *"genai-perf"* ]]
 }
 
 _is_lmbench_workload() {
-  [[ "${dynamo_args["workload-type"]}" == "lmbench" ]]
+  [[ "${dynamo_args["workload-type"]}" == *"lmbench"* ]]
 }
 
 _is_single_shot_workload() {
-  [[ "${dynamo_args["workload-type"]}" == "single-shot" ]]
+  [[ "${dynamo_args["workload-type"]}" == *"single-shot"* ]]
 }
 
 _init_runtime_env() {
@@ -514,9 +519,9 @@ _init_runtime_env() {
 
 function launch_node_setup_cmd()
 {
-  log "Installing uv"
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  source $HOME/.local/bin/env
+  #log "Installing uv"
+  #curl -LsSf https://astral.sh/uv/install.sh | sh
+  #source $HOME/.local/bin/env
 
   if [[ -n "${dynamo_args["node-setup-cmd"]}" ]]; then
     log "Launching node setup command: ${dynamo_args["node-setup-cmd"]}"
@@ -642,6 +647,48 @@ validate_environment() {
   log "Environment validation complete"
 }
 
+function wait_for_frontend_marker()
+{
+  while [ ! -f "$DONE_MARKER" ]; do
+    exit_on_error
+    log "Waiting for frontend completion marker by polling $DONE_MARKER"
+    sleep 30
+  done
+
+  log "Done marker found."
+}
+
+function mark_done()
+{
+  local extra_script="/cloudai_install/extra-script.sh"
+  local extra_script_marker="${RESULTS_DIR}/extra-script.marker"
+
+  # Loop infinitely, checking for updates to the extra script.
+  while true; do
+    if [[ ! -f "$extra_script" ]]; then
+      log "Extra script not found."
+      break
+    fi
+
+    if [[ "$extra_script" -nt "$extra_script_marker" ]]; then
+      touch $extra_script_marker
+      local extra_script_copy="${RESULTS_DIR}/extra-script.sh.$(date +%Y%m%d%H%M%S)"
+      cp $extra_script $extra_script_copy
+      log "Extra script updated. Running $extra_script_copy."
+      bash $extra_script_copy >> ${RESULTS_DIR}/extra-script.log 2>&1
+      sleep 10
+    else
+      log "Extra script not updated. Sleeping for 30 seconds and checking again."
+      sleep 30
+    fi
+  done
+
+  while true; do
+    sleep 10
+  done
+  touch "$DONE_MARKER"
+}
+
 function launch_etcd()
 {
   log "Launching etcd"
@@ -720,7 +767,7 @@ function launch_prefill()
 
 function launch_lmcache_controller()
 {
-  if [[ "$ENABLE_LMCACHE" != "1" ]]; then
+  if [[ "${dynamo_args["connector"]}" != "lmcache" ]]; then
     return
   fi
 
@@ -740,6 +787,32 @@ function clear_lmcache()
   }')
 
   log "LMCache cleared. Response: $response"
+}
+
+function clear_kv_cache()
+{
+  local kvbm_metrics_endpoint="${dyn_metrics_endpoint}:${DYN_KVBM_METRICS_PORT}/metrics"
+
+  local dyn_metrics_endpoint="${dynamo_args["url"]}/metrics"
+  # This clears G1 (GPU) + G2 (CPU) + G3 (Disk) at once
+  status=$(curl -s ${dyn_metrics_endpoint} | grep -E "kvstats_active_blocks|kvstats_total_blocks")
+  log "KV cache status before clear: $status"
+
+  response=$(curl -s -X POST http://${dynamo_args["url"]}/reset_prefix_cache)
+  log "KV prefix cache reset. Response: $response"
+
+  response=$(curl -s -X POST http://${dynamo_args["url"]}/clear_kv_blocks)
+  log "KV blocks cleared. Response: $response"
+
+  status=$(curl -s ${dyn_metrics_endpoint} | grep -E "kvstats_active_blocks|kvstats_total_blocks")
+  log "KV cache status after clear: $status"
+
+  status=$(curl -s ${kvbm_metrics_endpoint} | grep -E "host_cache_hit_rate|disk_cache_hit_rate")
+  log "KVBM cache hit rates after clear: $status"
+
+  if [[ "${dynamo_args["connector"]}" == "lmcache" ]]; then
+    clear_lmcache
+  fi
 }
 
 function wait_for_dynamo_frontend()
@@ -763,21 +836,29 @@ function wait_for_dynamo_frontend()
   log "Dynamo frontend is ready"
 }
 
-_probe_frontend_once() {
+_query_frontend() {
+  local content="${1:-The color of sky is}"
+  content=$(echo "$content" | sed 's/"/\\"/g' | sed 's/\n/\\n/g')
+  local max_tokens="${2:-10}"
+
   local json='{
     "model": "'${dynamo_args["model"]}'",
-    "messages": [{"role": "user", "content": "The color of sky is"}],
+    "messages": [{"role": "user", "content": "'"$content"'"}],
     "stream": false,
-    "max_tokens": 10
+    "max_tokens": '$max_tokens',
+    "temperature": 0,
+    "top_p": 0.0001
   }'
-  curl -s -X POST "${dynamo_args["url"]}/v1/chat/completions" -H "Content-Type: application/json" -d "$json"
+
+  echo "$json" > $RESULTS_DIR/curl_cmd.json
+  echo "$json" >> $RESULTS_DIR/curl_cmd.jsonl
+
+  curl -s -X POST "${dynamo_args["url"]}/v1/chat/completions" -H "Content-Type: application/json" -d @$RESULTS_DIR/curl_cmd.json
 }
 
 function launch_genai_perf()
 {
-  wait_for_dynamo_frontend
-
-  local resp=$(_probe_frontend_once)
+  local resp=$(_query_frontend)
   echo "Response: $resp"
 
   local genai_perf_arguments=$(array_to_args genai_perf_args)
@@ -792,14 +873,12 @@ function launch_genai_perf()
 
   profile_path=$(find . -type f -name "profile_genai_perf.csv" -print -quit)
   if [[ -f "$profile_path" ]]; then
-    python3 /cloudai_install/calc_percentile_csv.py $profile_path -o $RESULTS_DIR/report.csv
+    python3 /cloudai_install/calc_percentile_csv.py $profile_path -o $RESULTS_DIR/genai_perf_report.csv
     output_tokens_per_second=$(grep "output_tokens_per_second" $profile_path | awk '{print $2}')
     output_tokens_per_second_per_gpu=$(( $output_tokens_per_second / $total_gpus ))
-    grep ".*,.*,.*,.*" $profile_path > $RESULTS_DIR/report.csv
-    echo "Output tokens per second per gpu,$output_tokens_per_second_per_gpu,0,0,0,0,0,0,0,0,0,0,0" >> $RESULTS_DIR/report.csv
+    grep ".*,.*,.*,.*" $profile_path > $RESULTS_DIR/genai_perf_report.csv
+    echo "Output tokens per second per gpu,$output_tokens_per_second_per_gpu,0,0,0,0,0,0,0,0,0,0,0" >> $RESULTS_DIR/genai_perf_report.csv
   fi
-
-  touch "$DONE_MARKER"
 }
 
 function setup_cufile()
@@ -829,7 +908,7 @@ function setup_cufile()
             },
   "logging": {
     "dir": "$RESULTS_DIR",
-    "level": "${CUFILE_LOG_LEVEL:-info}"
+    "level": "${CUFILE_LOG_LEVEL:-INFO}"
   }
 }
 EOF
@@ -838,25 +917,22 @@ EOF
 
 function setup_kvbm()
 {
-  if [[ "$ENABLE_KVBM" != "1" ]]; then
+  if [[ "${dynamo_args["connector"]}" != "kvbm" ]]; then
     return
   fi
 
-  if [[ -z "${DYN_KVBM_DISK_CACHE_DIR}" ]]; then
-    log "ERROR: DYN_KVBM_DISK_CACHE_DIR is not set"
-    exit 1
-  fi
+  local storage_cachedir="${dynamo_args["storage-cache-dir"]}/${dynamo_args["frontend-node"]}/kvbm/cache"
+  rm -rf ${storage_cachedir}
+  mkdir -p ${storage_cachedir}
+  chmod 755 ${storage_cachedir}
 
-  rm -rf ${DYN_KVBM_DISK_CACHE_DIR}
-  mkdir -p ${DYN_KVBM_DISK_CACHE_DIR}
-  chmod 755 ${DYN_KVBM_DISK_CACHE_DIR}
-
+  export DYN_KVBM_DISK_CACHE_DIR=${storage_cachedir}
   setup_cufile
 }
 
 function setup_lmcache()
 {
-  if [[ "$ENABLE_LMCACHE" != "1" ]]; then
+  if [[ "${dynamo_args["connector"]}" != "lmcache" ]]; then
     return
   fi
 
@@ -897,41 +973,75 @@ function setup_lmcache()
   setup_cufile
 }
 
-function launch_single_shot()
+function flush_cache()
 {
-  wait_for_dynamo_frontend
-  local isl="${dynamo_args["isl"]}"
+  #wget -nc https://ocw.mit.edu/ans7870/6/6.006/s08/lecturenotes/files/t8.shakespeare.txt
+  input_file="/cloudai_install/t8.shakespeare.txt"
+ 
+  chunk_size=3000
+  start=1
+  total_lines=$(wc -l < "$input_file")
+  total_lines=124000
+  
+  log "Flushing cache with $chunk_size lines per request, total lines: $total_lines"
+  while [ $start -le $((total_lines - chunk_size)) ]; do
+    local content=$(awk 'NR>='$start' && NR<='$((start+chunk_size))'' "$input_file")
+    local response=$(_query_frontend "$content" 1)
+    start=$((start + chunk_size))
+    echo "$response" >> $RESULTS_DIR/flush_cache_response.jsonl
+  done
+
+  log "Flushed cache"
+}
+
+function launch_single_shot_once()
+{
+  local isl="$1"
+  local flush_cache=$2
+  local prefix="$RESULTS_DIR/single_shot${flush_cache//--/_}"
+
   local lmcache_path="${dynamo_args["lmcache-path"]}"
   local url="${dynamo_args["url"]}"
   local cache_hit_pct="${dynamo_args["cache-hit-pct"]:-1}"
 
-  local max_ctx_tokens_following=$(( $isl * 100 / $cache_hit_pct ))
-
-  log "Launching single shot with lmcache path: $lmcache_path"
-  log "python $lmcache_path/examples/online_session/openai_chat_completion_client.py --model ${dynamo_args["model"]} --api_base $url/v1 --max_ctx_tokens 131072 --num_following 1 "
+  log "Launching single shot with ISL: $isl, lmcache path: $lmcache_path, extra_args: $flush_cache"
 
   pushd $lmcache_path/examples/online_session
-  log "python $lmcache_path/examples/online_session/openai_chat_completion_client.py --model ${dynamo_args["model"]} --api_base $url/v1 --max_ctx_tokens ${dynamo_args["isl"]} --context_file $lmcache_path/examples/online_session/salt.7.txt --out $RESULTS_DIR/single_shot.jsonl --num_following 1"
 
   python $lmcache_path/examples/online_session/openai_chat_completion_client.py \
     --model ${dynamo_args["model"]} \
     --api_base $url/v1 \
     --max_ctx_tokens $isl \
-    --flush_cache \
+    ${flush_cache} \
     --context_file $lmcache_path/examples/online_session/salt.7.txt \
-    --out $RESULTS_DIR/single_shot.jsonl \
-    --num_following 1 > $RESULTS_DIR/single_shot_first_run.log 2>&1
+    --out ${prefix}_${isl}.jsonl \
+    --num_following 1 > ${prefix}_${isl}.log 2>&1
 
-    # --osl 10 \
-    # --max_ctx_tokens_following ${max_ctx_tokens_following} \
-  python -c "import pandas as pd; pd.read_json('$RESULTS_DIR/single_shot.jsonl', lines=True).to_csv('$RESULTS_DIR/report.csv', float_format='%.3f',index=False)"
+  awk -v RS="" -F'[} ]' '{ printf "%d,%.3f,%.3f\n", $4, $6, $12 }' ${prefix}_${isl}.jsonl >> ${prefix}_report.csv
 
   popd
-
-  touch "$DONE_MARKER"
 }
 
-function launch_lmbench()
+function launch_single_shot()
+{
+  local all_isl="${dynamo_args["isl"]}"
+
+  # Split comma-separated all_isl into individual isl values and iterate over them. Use cut -d',' to split.
+  log "Will iterate over ISLs: $all_isl"
+  echo "context_tokens,ttft_compute,ttft_storage" >> $RESULTS_DIR/single_shot_report.csv
+  echo "context_tokens,ttft_compute,ttft_storage" >> $RESULTS_DIR/single_shot_flush_cache_report.csv
+  for isl in $(echo $all_isl | tr ',' '\n'); do
+    launch_single_shot_once $isl "--flush_cache"
+    clear_kv_cache
+    flush_cache
+    launch_single_shot_once $isl
+    clear_kv_cache
+    flush_cache
+    #flush_cache
+  done
+}
+
+function launch_lmbench_old()
 {
   wait_for_dynamo_frontend
 
@@ -953,20 +1063,51 @@ function launch_lmbench()
   log "Done with lmbench run"
 
   log "Summarizing lmbench run"
-  python3 /cloudai_install/calc_percentile_csv.py $RESULTS_DIR/lmcache_bench_output.csv -o $RESULTS_DIR/report.csv
+  python3 /cloudai_install/calc_percentile_csv.py $RESULTS_DIR/lmcache_bench_output.csv -o $RESULTS_DIR/lmbench_report.csv
 
-  touch "$DONE_MARKER"
+  #touch "$DONE_MARKER"
+  mark_done
 }
 
-function wait_for_frontend_marker()
+function launch_lmbench()
 {
-  while [ ! -f "$DONE_MARKER" ]; do
-    exit_on_error
-    log "Waiting for frontend completion marker by polling $DONE_MARKER"
-    sleep 30
+  local log_file="${RESULTS_DIR}/lmbench.log"
+
+  # run LMBenchmark, adjust the model name if you are using a different model
+  # for detail how to config and run LMBenchmark: https://github.com/LMCache/LMBenchmark/tree/main/synthetic-multi-round-qa
+  local lmbench_dir="${dynamo_args["lmbench-dir"]}"
+  local cmd="${dynamo_args["lmbench-cmd"]}"
+  local key="${lmbench_args["--key"]}"
+  
+  cmd=$(replace_placeholders "$cmd")
+  cmd=${cmd//%LMBENCH_DIR%/${lmbench_dir}}
+  local extra_args="${lmbench_args["--extra-args"]}"
+  extra_args=$(replace_placeholders "$extra_args")
+  extra_args=${extra_args//%KEY%/${key}}
+
+  #export NUM_USERS_WARMUP="20"
+  #export NUM_USERS="15"
+  #export NUM_ROUNDS="20"
+  #export SYSTEM_PROMPT="1000" # Shared system prompt length
+  #export CHAT_HISTORY="7000" # User specific chat history length
+  #export ANSWER_LEN="100" # Generation length per round
+  #export INIT_USER_ID="1"
+  #export TEST_DURATION="600" # Duration of the test in seconds
+
+  pushd $RESULTS_DIR
+  log "Launching lmbench with args: $cmd $extra_args"
+
+  set -x
+  $cmd $extra_args > ${log_file} 2>&1
+  set +x
+
+  log "Done with lmbench run; summarizing results"
+  
+  for i in $RESULTS_DIR/${key}_*.csv; do
+    python3 /cloudai_install/calc_percentile_csv.py $i -o $RESULTS_DIR/lmbench_${key}_report.csv
   done
 
-  log "Done marker found."
+  popd
 }
 
 function log_gpu_utilization()
@@ -985,6 +1126,28 @@ function log_gpu_utilization()
     --format=csv \
     -l 5 \
     -f ${RESULTS_DIR}/gpu_utilization-${SLURM_NODEID}.csv
+}
+
+function launch_workload()
+{
+  res=$(curl -v http://${dynamo_args["url"]}/health)
+  echo "Health before wait: $res"
+  wait_for_dynamo_frontend
+
+  res=$(curl -v http://${dynamo_args["url"]}/health)
+  echo "Health after dynamo frontend is ready: $res"
+
+  if _is_genai_perf_workload; then
+    launch_genai_perf
+  fi
+  if _is_lmbench_workload; then
+    launch_lmbench
+  fi
+  if _is_single_shot_workload; then
+    launch_single_shot
+  fi
+
+  mark_done
 }
 
 function main()
@@ -1032,15 +1195,8 @@ function main()
   if _is_frontend_node; then
     launch_lmcache_controller &
 
-    if _is_genai_perf_workload; then
-      launch_genai_perf &
-    fi
-    if _is_lmbench_workload; then
-      launch_lmbench &
-    fi
-    if _is_single_shot_workload; then
-      launch_single_shot &
-    fi
+    launch_workload &
+
   fi
 
   wait_for_frontend_marker
